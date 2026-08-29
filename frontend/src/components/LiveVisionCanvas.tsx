@@ -3,7 +3,7 @@ import { RotateCcw, Eye, EyeOff } from 'lucide-react';
 import { StreamTelemetryPayload, StreamROIConfig, ROINormalizedBox } from '../types';
 
 interface LiveVisionCanvasProps {
-  canvasRef?: React.RefObject<HTMLCanvasElement>;
+  canvasRef: React.RefObject<HTMLCanvasElement>;
   latestTelemetry: StreamTelemetryPayload | null;
   confidenceThreshold: number;
   streamId: string;
@@ -13,20 +13,15 @@ interface LiveVisionCanvasProps {
 type DragHandle = 'move' | 'nw' | 'ne' | 'se' | 'sw' | 'n' | 's' | 'e' | 'w' | null;
 
 export const LiveVisionCanvas: React.FC<LiveVisionCanvasProps> = ({
+  canvasRef,
   latestTelemetry,
   confidenceThreshold,
   streamId,
   onRoiChange,
 }) => {
   // ---------------------------------------------------------------------------
-  // Dual-Layer Canvas Refs
-  // Layer 1 (Bottom): Dynamic YOLOv8 Inference Bounding Boxes & Tactical HUD
-  // Layer 2 (Top): Interactive Draggable/Resizable ROI Box (60 FPS, Zero React Lag)
+  // Decoupled Mutable State Refs (Zero React Re-render Lag during active drag)
   // ---------------------------------------------------------------------------
-  const detectionCanvasRef = useRef<HTMLCanvasElement | null>(null);
-  const interactiveCanvasRef = useRef<HTMLCanvasElement | null>(null);
-
-  // Mutable State Refs for 60 FPS Animation
   const roiRef = useRef<ROINormalizedBox>({
     x1: 0.20,
     y1: 0.30,
@@ -105,269 +100,262 @@ export const LiveVisionCanvas: React.FC<LiveVisionCanvasProps> = ({
   );
 
   // ---------------------------------------------------------------------------
-  // Continuous 60 FPS Combined Canvas Animation Loop
-  // (Layer 1: YOLOv8 Bounding Boxes + Layer 2: Draggable ROI Box)
+  // Continuous 60 FPS Unified Canvas Animation Loop
+  // (Renders YOLOv8 Detection Boxes + Interactive Draggable ROI directly onto canvas)
   // ---------------------------------------------------------------------------
   useEffect(() => {
     let animId: number;
 
-    const renderFrame = () => {
-      // 1. Render Detection Bounding Boxes on Layer 1
-      const detCanvas = detectionCanvasRef.current;
-      if (detCanvas) {
-        const detCtx = detCanvas.getContext('2d');
-        if (detCtx) {
-          const w = detCanvas.width;
-          const h = detCanvas.height;
-          detCtx.clearRect(0, 0, w, h);
-
-          const telemetry = latestTelemetryRef.current;
-          const confThresh = confidenceThresholdRef.current;
-          const roi = roiRef.current;
-          const isRoiActive = roiEnabledRef.current;
-
-          let hasBreach = false;
-
-          if (telemetry?.detections && telemetry.detections.length > 0) {
-            telemetry.detections.forEach((det) => {
-              if (det.confidence < confThresh) return;
-
-              const [nx1, ny1, nx2, ny2] = det.normalized_box;
-              const x1 = nx1 * w;
-              const y1 = ny1 * h;
-              const boxW = Math.max(8, (nx2 - nx1) * w);
-              const boxH = Math.max(8, (ny2 - ny1) * h);
-
-              const cx = (nx1 + nx2) / 2.0;
-              const cy = (ny1 + ny2) / 2.0;
-
-              // Check if detection centroid is inside the user-defined ROI box
-              const insideRoi =
-                isRoiActive &&
-                cx >= roi.x1 &&
-                cx <= roi.x2 &&
-                cy >= roi.y1 &&
-                cy <= roi.y2;
-
-              if (insideRoi) {
-                hasBreach = true;
-              }
-
-              const isProhibited = [
-                'cell phone',
-                'laptop',
-                'knife',
-                'scissors',
-                'backpack',
-              ].includes(det.label.toLowerCase());
-
-              const isViolator =
-                insideRoi || isProhibited || (det as any).is_violator;
-              const boxColor = isViolator ? '#ef4444' : '#10b981';
-              const labelBg = isViolator ? '#dc2626' : '#059669';
-
-              // Draw Bounding Box with glow
-              detCtx.save();
-              detCtx.strokeStyle = boxColor;
-              detCtx.lineWidth = 2.5;
-              detCtx.shadowColor = boxColor;
-              detCtx.shadowBlur = isViolator ? 12 : 6;
-              detCtx.strokeRect(x1, y1, boxW, boxH);
-
-              // Tactical Corner Accents
-              const cornerLen = Math.min(16, boxW / 4, boxH / 4);
-              detCtx.lineWidth = 4;
-              // Top Left
-              detCtx.beginPath();
-              detCtx.moveTo(x1, y1 + cornerLen);
-              detCtx.lineTo(x1, y1);
-              detCtx.lineTo(x1 + cornerLen, y1);
-              detCtx.stroke();
-              // Top Right
-              detCtx.beginPath();
-              detCtx.moveTo(x1 + boxW - cornerLen, y1);
-              detCtx.lineTo(x1 + boxW, y1);
-              detCtx.lineTo(x1 + boxW, y1 + cornerLen);
-              detCtx.stroke();
-              // Bottom Left
-              detCtx.beginPath();
-              detCtx.moveTo(x1, y1 + boxH - cornerLen);
-              detCtx.lineTo(x1, y1 + boxH);
-              detCtx.lineTo(x1 + cornerLen, y1 + boxH);
-              detCtx.stroke();
-              // Bottom Right
-              detCtx.beginPath();
-              detCtx.moveTo(x1 + boxW - cornerLen, y1 + boxH);
-              detCtx.lineTo(x1 + boxW, y1 + boxH);
-              detCtx.lineTo(x1 + boxW, y1 + boxH - cornerLen);
-              detCtx.stroke();
-
-              // Label Pill
-              const tagPrefix = isViolator ? '[ALERT] ' : '';
-              const tagText = `${tagPrefix}${det.label.toUpperCase()} ${Math.round(
-                det.confidence * 100
-              )}% ${det.tracking_id ? `[#${det.tracking_id}]` : ''}`;
-
-              detCtx.font = 'bold 11px monospace';
-              const textWidth = detCtx.measureText(tagText).width;
-
-              const pillX = x1;
-              const pillY = Math.max(22, y1 - 6);
-              const pillH = 20;
-              const pillW = textWidth + 14;
-
-              detCtx.fillStyle = labelBg;
-              detCtx.beginPath();
-              detCtx.roundRect(pillX, pillY - pillH, pillW, pillH, [4, 4, 0, 0]);
-              detCtx.fill();
-
-              detCtx.fillStyle = '#ffffff';
-              detCtx.shadowBlur = 0;
-              detCtx.fillText(tagText, pillX + 6, pillY - 5);
-              detCtx.restore();
-            });
-          }
-
-          isBreachedRef.current = hasBreach;
-        }
+    const render = () => {
+      const canvas = canvasRef.current;
+      if (!canvas) {
+        animId = requestAnimationFrame(render);
+        return;
+      }
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        animId = requestAnimationFrame(render);
+        return;
       }
 
-      // 2. Render Interactive Draggable ROI Box on Layer 2
-      const roiCanvas = interactiveCanvasRef.current;
-      if (roiCanvas) {
-        const roiCtx = roiCanvas.getContext('2d');
-        if (roiCtx) {
-          const w = roiCanvas.width;
-          const h = roiCanvas.height;
-          roiCtx.clearRect(0, 0, w, h);
+      const w = canvas.width;
+      const h = canvas.height;
 
-          const isEnabled = roiEnabledRef.current;
-          const isBreached = isBreachedRef.current;
-          const roi = roiRef.current;
-          const label = roiLabelRef.current;
+      // 1. Clear visible canvas completely on every animation frame
+      ctx.clearRect(0, 0, w, h);
 
-          if (isEnabled) {
-            const rx1 = roi.x1 * w;
-            const ry1 = roi.y1 * h;
-            const rw = (roi.x2 - roi.x1) * w;
-            const rh = (roi.y2 - roi.y1) * h;
+      const telemetry = latestTelemetryRef.current;
+      const confThresh = confidenceThresholdRef.current;
+      const roi = roiRef.current;
+      const isRoiActive = roiEnabledRef.current;
+      const label = roiLabelRef.current;
 
-            roiCtx.save();
+      let hasBreach = false;
 
-            if (isBreached) {
-              // Breached: Solid red glow with crimson fill
-              roiCtx.strokeStyle = '#ef4444';
-              roiCtx.lineWidth = 3;
-              roiCtx.shadowColor = '#ef4444';
-              roiCtx.shadowBlur = 14;
-              roiCtx.fillStyle = 'rgba(239, 68, 68, 0.16)';
-              roiCtx.strokeRect(rx1, ry1, rw, rh);
-              roiCtx.fillRect(rx1, ry1, rw, rh);
+      // 2. Render Interactive Draggable ROI Box
+      if (isRoiActive) {
+        const rx1 = roi.x1 * w;
+        const ry1 = roi.y1 * h;
+        const rw = (roi.x2 - roi.x1) * w;
+        const rh = (roi.y2 - roi.y1) * h;
 
-              // Corner Handles (Red)
-              const handleSize = 10;
-              roiCtx.fillStyle = '#ef4444';
-              roiCtx.fillRect(rx1 - handleSize / 2, ry1 - handleSize / 2, handleSize, handleSize);
-              roiCtx.fillRect(rx1 + rw - handleSize / 2, ry1 - handleSize / 2, handleSize, handleSize);
-              roiCtx.fillRect(rx1 + rw - handleSize / 2, ry1 + rh - handleSize / 2, handleSize, handleSize);
-              roiCtx.fillRect(rx1 - handleSize / 2, ry1 + rh - handleSize / 2, handleSize, handleSize);
+        ctx.save();
 
-              // Breach Pill
-              const labelText = `⚠️ BREACH: Zone Occupied (${label})`;
-              roiCtx.font = 'bold 11px monospace';
-              const tw = roiCtx.measureText(labelText).width;
-              roiCtx.fillStyle = '#dc2626';
-              roiCtx.beginPath();
-              roiCtx.roundRect(rx1, Math.max(0, ry1 - 24), tw + 16, 22, [4, 4, 0, 0]);
-              roiCtx.fill();
+        if (isBreachedRef.current) {
+          // Breached: Solid pulsing red with glow
+          ctx.strokeStyle = '#ef4444';
+          ctx.lineWidth = 3.5;
+          ctx.shadowColor = '#ef4444';
+          ctx.shadowBlur = 16;
+          ctx.fillStyle = 'rgba(239, 68, 68, 0.18)';
+          ctx.strokeRect(rx1, ry1, rw, rh);
+          ctx.fillRect(rx1, ry1, rw, rh);
 
-              roiCtx.fillStyle = '#ffffff';
-              roiCtx.shadowBlur = 0;
-              roiCtx.fillText(labelText, rx1 + 8, Math.max(15, ry1 - 8));
-            } else {
-              // Normal: Dashed cyan borders
-              roiCtx.strokeStyle = '#06b6d4';
-              roiCtx.lineWidth = 2.5;
-              roiCtx.setLineDash([8, 6]);
-              roiCtx.shadowColor = '#06b6d4';
-              roiCtx.shadowBlur = 8;
-              roiCtx.strokeRect(rx1, ry1, rw, rh);
+          // Corner Handles (Red)
+          const handleSize = 12;
+          ctx.fillStyle = '#ef4444';
+          ctx.fillRect(rx1 - handleSize / 2, ry1 - handleSize / 2, handleSize, handleSize);
+          ctx.fillRect(rx1 + rw - handleSize / 2, ry1 - handleSize / 2, handleSize, handleSize);
+          ctx.fillRect(rx1 + rw - handleSize / 2, ry1 + rh - handleSize / 2, handleSize, handleSize);
+          ctx.fillRect(rx1 - handleSize / 2, ry1 + rh - handleSize / 2, handleSize, handleSize);
 
-              roiCtx.fillStyle = isDraggingRef.current
-                ? 'rgba(6, 182, 212, 0.12)'
-                : 'rgba(6, 182, 212, 0.05)';
-              roiCtx.fillRect(rx1, ry1, rw, rh);
+          // Breach Label Pill
+          const labelText = `⚠️ BREACH: Zone Occupied (${label})`;
+          ctx.font = 'bold 12px monospace';
+          const tw = ctx.measureText(labelText).width;
+          ctx.fillStyle = '#dc2626';
+          ctx.beginPath();
+          ctx.roundRect(rx1, Math.max(0, ry1 - 24), tw + 18, 22, [4, 4, 0, 0]);
+          ctx.fill();
 
-              // Corner Handles
-              roiCtx.setLineDash([]);
-              const cornerHandles = [
-                [rx1, ry1],
-                [rx1 + rw, ry1],
-                [rx1 + rw, ry1 + rh],
-                [rx1, ry1 + rh],
-              ];
+          ctx.fillStyle = '#ffffff';
+          ctx.shadowBlur = 0;
+          ctx.fillText(labelText, rx1 + 8, Math.max(15, ry1 - 8));
+        } else {
+          // Normal: Dashed cyan borders
+          ctx.strokeStyle = '#06b6d4';
+          ctx.lineWidth = 2.5;
+          ctx.setLineDash([8, 6]);
+          ctx.shadowColor = '#06b6d4';
+          ctx.shadowBlur = 8;
+          ctx.strokeRect(rx1, ry1, rw, rh);
 
-              cornerHandles.forEach(([hx, hy]) => {
-                roiCtx.fillStyle = '#06b6d4';
-                roiCtx.beginPath();
-                roiCtx.arc(hx, hy, 5.5, 0, 2 * Math.PI);
-                roiCtx.fill();
-                roiCtx.fillStyle = '#ffffff';
-                roiCtx.beginPath();
-                roiCtx.arc(hx, hy, 3, 0, 2 * Math.PI);
-                roiCtx.fill();
-              });
+          ctx.fillStyle = isDraggingRef.current
+            ? 'rgba(6, 182, 212, 0.14)'
+            : 'rgba(6, 182, 212, 0.05)';
+          ctx.fillRect(rx1, ry1, rw, rh);
 
-              // Edge Midpoint Handles
-              const edgeHandles = [
-                [rx1 + rw / 2, ry1],
-                [rx1 + rw / 2, ry1 + rh],
-                [rx1 + rw, ry1 + rh / 2],
-                [rx1, ry1 + rh / 2],
-              ];
+          // Corner Handles (NW, NE, SE, SW)
+          ctx.setLineDash([]);
+          const cornerHandles = [
+            [rx1, ry1],
+            [rx1 + rw, ry1],
+            [rx1 + rw, ry1 + rh],
+            [rx1, ry1 + rh],
+          ];
 
-              edgeHandles.forEach(([hx, hy]) => {
-                roiCtx.fillStyle = '#0891b2';
-                roiCtx.beginPath();
-                roiCtx.arc(hx, hy, 4, 0, 2 * Math.PI);
-                roiCtx.fill();
-                roiCtx.fillStyle = '#ffffff';
-                roiCtx.beginPath();
-                roiCtx.arc(hx, hy, 2, 0, 2 * Math.PI);
-                roiCtx.fill();
-              });
+          cornerHandles.forEach(([hx, hy]) => {
+            ctx.fillStyle = '#06b6d4';
+            ctx.beginPath();
+            ctx.arc(hx, hy, 6, 0, 2 * Math.PI);
+            ctx.fill();
+            ctx.fillStyle = '#ffffff';
+            ctx.beginPath();
+            ctx.arc(hx, hy, 3.5, 0, 2 * Math.PI);
+            ctx.fill();
+          });
 
-              // Tactical Cyan Pill
-              const labelText = `● RESTRICTED ROI [${label}]`;
-              roiCtx.font = 'bold 11px monospace';
-              const tw = roiCtx.measureText(labelText).width;
-              roiCtx.fillStyle = '#0891b2';
-              roiCtx.beginPath();
-              roiCtx.roundRect(rx1, Math.max(0, ry1 - 22), tw + 14, 20, [4, 4, 0, 0]);
-              roiCtx.fill();
+          // Edge Midpoint Handles (N, S, E, W)
+          const edgeHandles = [
+            [rx1 + rw / 2, ry1],
+            [rx1 + rw / 2, ry1 + rh],
+            [rx1 + rw, ry1 + rh / 2],
+            [rx1, ry1 + rh / 2],
+          ];
 
-              roiCtx.fillStyle = '#ffffff';
-              roiCtx.shadowBlur = 0;
-              roiCtx.fillText(labelText, rx1 + 7, Math.max(14, ry1 - 7));
-            }
+          edgeHandles.forEach(([hx, hy]) => {
+            ctx.fillStyle = '#0891b2';
+            ctx.beginPath();
+            ctx.arc(hx, hy, 4.5, 0, 2 * Math.PI);
+            ctx.fill();
+            ctx.fillStyle = '#ffffff';
+            ctx.beginPath();
+            ctx.arc(hx, hy, 2.5, 0, 2 * Math.PI);
+            ctx.fill();
+          });
 
-            roiCtx.restore();
-          }
+          // Tactical Cyan Pill
+          const labelText = `● RESTRICTED ROI [${label}]`;
+          ctx.font = 'bold 12px monospace';
+          const tw = ctx.measureText(labelText).width;
+          ctx.fillStyle = '#0891b2';
+          ctx.beginPath();
+          ctx.roundRect(rx1, Math.max(0, ry1 - 22), tw + 16, 20, [4, 4, 0, 0]);
+          ctx.fill();
+
+          ctx.fillStyle = '#ffffff';
+          ctx.shadowBlur = 0;
+          ctx.fillText(labelText, rx1 + 8, Math.max(14, ry1 - 7));
         }
+
+        ctx.restore();
       }
 
-      animId = requestAnimationFrame(renderFrame);
+      // 3. Render Real Dynamic YOLOv8 Detections
+      if (telemetry?.detections && telemetry.detections.length > 0) {
+        telemetry.detections.forEach((det) => {
+          if (det.confidence < confThresh) return;
+
+          const [nx1, ny1, nx2, ny2] = det.normalized_box;
+          const x1 = nx1 * w;
+          const y1 = ny1 * h;
+          const boxW = Math.max(10, (nx2 - nx1) * w);
+          const boxH = Math.max(10, (ny2 - ny1) * h);
+
+          const cx = (nx1 + nx2) / 2.0;
+          const cy = (ny1 + ny2) / 2.0;
+
+          // Check if detection centroid is inside custom ROI
+          const insideRoi =
+            isRoiActive &&
+            cx >= roi.x1 &&
+            cx <= roi.x2 &&
+            cy >= roi.y1 &&
+            cy <= roi.y2;
+
+          if (insideRoi) {
+            hasBreach = true;
+          }
+
+          const isProhibited = [
+            'cell phone',
+            'laptop',
+            'knife',
+            'scissors',
+            'backpack',
+          ].includes(det.label.toLowerCase());
+
+          const isViolator =
+            insideRoi || isProhibited || (det as any).is_violator;
+          const boxColor = isViolator ? '#ef4444' : '#10b981';
+          const labelBg = isViolator ? '#dc2626' : '#059669';
+
+          // Draw Bounding Box with glow
+          ctx.save();
+          ctx.strokeStyle = boxColor;
+          ctx.lineWidth = 2.5;
+          ctx.shadowColor = boxColor;
+          ctx.shadowBlur = isViolator ? 14 : 6;
+          ctx.strokeRect(x1, y1, boxW, boxH);
+
+          // Tactical Corner Brackets
+          const cornerLen = Math.min(18, boxW / 4, boxH / 4);
+          ctx.lineWidth = 4;
+          // Top Left
+          ctx.beginPath();
+          ctx.moveTo(x1, y1 + cornerLen);
+          ctx.lineTo(x1, y1);
+          ctx.lineTo(x1 + cornerLen, y1);
+          ctx.stroke();
+          // Top Right
+          ctx.beginPath();
+          ctx.moveTo(x1 + boxW - cornerLen, y1);
+          ctx.lineTo(x1 + boxW, y1);
+          ctx.lineTo(x1 + boxW, y1 + cornerLen);
+          ctx.stroke();
+          // Bottom Left
+          ctx.beginPath();
+          ctx.moveTo(x1, y1 + boxH - cornerLen);
+          ctx.lineTo(x1, y1 + boxH);
+          ctx.lineTo(x1 + cornerLen, y1 + boxH);
+          ctx.stroke();
+          // Bottom Right
+          ctx.beginPath();
+          ctx.moveTo(x1 + boxW - cornerLen, y1 + boxH);
+          ctx.lineTo(x1 + boxW, y1 + boxH);
+          ctx.lineTo(x1 + boxW, y1 + boxH - cornerLen);
+          ctx.stroke();
+
+          // Crisp Label Pill Above Box
+          const tagPrefix = isViolator ? '[ALERT] ' : '';
+          const tagText = `${tagPrefix}${det.label.toUpperCase()} ${Math.round(
+            det.confidence * 100
+          )}% ${det.tracking_id ? `[#${det.tracking_id}]` : ''}`;
+
+          ctx.font = 'bold 12px monospace';
+          const textWidth = ctx.measureText(tagText).width;
+
+          const pillX = x1;
+          const pillY = Math.max(22, y1 - 6);
+          const pillH = 22;
+          const pillW = textWidth + 16;
+
+          ctx.fillStyle = labelBg;
+          ctx.beginPath();
+          ctx.roundRect(pillX, pillY - pillH, pillW, pillH, [4, 4, 0, 0]);
+          ctx.fill();
+
+          ctx.fillStyle = '#ffffff';
+          ctx.shadowBlur = 0;
+          ctx.fillText(tagText, pillX + 8, pillY - 6);
+          ctx.restore();
+        });
+      }
+
+      isBreachedRef.current = hasBreach;
+
+      animId = requestAnimationFrame(render);
     };
 
-    animId = requestAnimationFrame(renderFrame);
+    animId = requestAnimationFrame(render);
     return () => cancelAnimationFrame(animId);
-  }, []);
+  }, [canvasRef]);
 
   // ---------------------------------------------------------------------------
-  // Pointer Event Handlers for Dragging & Resizing ROI
+  // Interactive Pointer Events for Dragging & Resizing ROI
   // ---------------------------------------------------------------------------
   const getNormalizedPointerPos = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    const canvas = interactiveCanvasRef.current;
+    const canvas = canvasRef.current;
     if (!canvas) return { x: 0, y: 0 };
     const rect = canvas.getBoundingClientRect();
     const x = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
@@ -421,7 +409,7 @@ export const LiveVisionCanvas: React.FC<LiveVisionCanvasProps> = ({
   };
 
   const handlePointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    const canvas = interactiveCanvasRef.current;
+    const canvas = canvasRef.current;
     if (!canvas) return;
 
     const { x, y } = getNormalizedPointerPos(e);
@@ -507,7 +495,7 @@ export const LiveVisionCanvas: React.FC<LiveVisionCanvasProps> = ({
         e.currentTarget.releasePointerCapture(e.pointerId);
       } catch (_) {}
 
-      const canvas = interactiveCanvasRef.current;
+      const canvas = canvasRef.current;
       if (canvas) {
         canvas.style.cursor = 'default';
       }
@@ -525,24 +513,16 @@ export const LiveVisionCanvas: React.FC<LiveVisionCanvasProps> = ({
 
   return (
     <div className="relative w-full h-full">
-      {/* Layer 1 (Bottom Canvas): Real-Time YOLOv8 Detection Bounding Boxes */}
+      {/* Primary Hardware-Accelerated Dynamic Vision & Interactive ROI Canvas */}
       <canvas
-        ref={detectionCanvasRef}
-        width={1280}
-        height={720}
-        className="absolute inset-0 w-full h-full object-cover pointer-events-none z-10"
-      />
-
-      {/* Layer 2 (Top Canvas): Hardware-Accelerated Interactive Draggable ROI */}
-      <canvas
-        ref={interactiveCanvasRef}
+        ref={canvasRef}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
         onPointerCancel={handlePointerUp}
         width={1280}
         height={720}
-        className="absolute inset-0 w-full h-full object-cover pointer-events-auto z-20 touch-none"
+        className="w-full h-full object-cover pointer-events-auto touch-none"
       />
 
       {/* Floating ROI Controls Toolbar */}
