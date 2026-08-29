@@ -24,6 +24,7 @@ from app.pipeline_utils import (
     is_box_inside_zone,
     normalize_box,
 )
+from app.ml_anomaly import GeneralMLAnomalyDetector
 from app.redis_client import redis_manager
 from app.schemas import (
     AlertRuleConfig,
@@ -77,6 +78,7 @@ class MLInferenceWorker:
         self.previous_centroids: Dict[str, List[Tuple[float, float, float]]] = {}  # stream_id -> [(cx, cy, timestamp)]
         self.recent_frame_times: List[float] = []
         self.last_snapshot_time: Dict[str, float] = {}
+        self.ml_anomaly_detectors: Dict[str, GeneralMLAnomalyDetector] = {}
 
     def load_model(self) -> None:
         """Loads and warms up the Ultralytics YOLOv8 model for CPU inference."""
@@ -129,6 +131,16 @@ class MLInferenceWorker:
                 k_sigma=config.audio_k_sigma,
             )
         return self.audio_analyzers[stream_id]
+
+    def get_ml_anomaly_detector(self, stream_id: str) -> GeneralMLAnomalyDetector:
+        """Retrieves or creates a dedicated GeneralMLAnomalyDetector (IsolationForest) for the stream."""
+        if stream_id not in self.ml_anomaly_detectors:
+            self.ml_anomaly_detectors[stream_id] = GeneralMLAnomalyDetector(
+                history_size=300,
+                contamination=0.05,
+                min_samples=25,
+            )
+        return self.ml_anomaly_detectors[stream_id]
 
     def estimate_centroid_velocities(
         self, stream_id: str, detections: List[DetectionResult], current_time: float
@@ -441,6 +453,42 @@ class MLInferenceWorker:
                                 )
                             )
 
+        # F. Unsupervised Machine Learning Outlier Detection (Isolation Forest)
+        ml_detector = self.get_ml_anomaly_detector(stream_id)
+        ml_result = ml_detector.process_frame(detections, current_time=now)
+        if ml_result.get("is_anomaly", False):
+            global_violated = True
+            global_rule = "ML_ISOLATION_FOREST_OUTLIER"
+            global_observed = float(ml_result.get("max_score", 0.0))
+            global_threshold = 0.12
+            global_rationale = ml_result.get("rationale", "ML statistical outlier detected.")
+
+            for anom_item in ml_result.get("details", []):
+                obj_idx = anom_item.get("object_index", 0)
+                if 0 <= obj_idx < len(detection_details):
+                    detection_details[obj_idx].is_violator = True
+
+            alerts.append(
+                AlertTrigger(
+                    alert_type="ml_anomaly",
+                    severity="critical",
+                    message=f"ML ANOMALY: Isolation Forest Outlier ({ml_result.get('anomaly_count', 1)} object(s) anomalous)",
+                    stream_id=stream_id,
+                    sequence_id=sequence_id,
+                    timestamp=now,
+                    details=ml_result,
+                )
+            )
+
+            triggered_rules.append(
+                TriggeredRuleDetail(
+                    rule_id="RULE_ML_ANOMALY",
+                    description=global_rationale,
+                    target_class="statistical_outlier",
+                    confidence=min(0.99, round(0.85 + ml_result.get("max_score", 0.0) * 0.2, 3)),
+                )
+            )
+
         # ---------------------------------------------------------------------
         # Audio Trigger Evaluation with Dynamic Noise Profiling & False-Positive Elimination
         # ---------------------------------------------------------------------
@@ -602,7 +650,7 @@ class MLInferenceWorker:
         for rule in triggered_rules:
             rule_type = rule.rule_id.lower()
             if rule_type not in existing_types and "collision" not in rule_type and "strike" not in rule_type:
-                sev = "critical" if rule.rule_id in ("RULE_PROHIBITED_OBJECT", "RULE_VEHICLE_COLLISION", "RULE_PEDESTRIAN_VEHICLE_STRIKE") else "warning"
+                sev = "critical" if rule.rule_id in ("RULE_PROHIBITED_OBJECT", "RULE_VEHICLE_COLLISION", "RULE_PEDESTRIAN_VEHICLE_STRIKE", "RULE_ML_ANOMALY") else "warning"
                 alerts.append(
                     AlertTrigger(
                         alert_type=rule_type,
@@ -723,6 +771,7 @@ class MLInferenceWorker:
                     "RULE_PROHIBITED_OBJECT",
                     "RULE_VEHICLE_COLLISION",
                     "RULE_PEDESTRIAN_VEHICLE_STRIKE",
+                    "RULE_ML_ANOMALY",
                 )
                 for r in triggered_rules
             )
