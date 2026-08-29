@@ -1,6 +1,12 @@
 from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.incident_schema import (
+    IncidentAnalysisResult,
+    IncidentCategory,
+    SeverityLevel,
+)
+
 
 class FrameIngestPayload(BaseModel):
     """Payload sent by edge devices/cameras via WebSocket or HTTP POST."""
@@ -223,6 +229,7 @@ class ForensicAnomalyIncident(BaseModel):
     visual_context: VisualContextDetail
     audio_context: AudioContextDetail
     system_telemetry: SystemTelemetryDetail
+    vlm_synthesis: Optional[IncidentAnalysisResult] = None
 
 
 class TokenOptimizationStats(BaseModel):
@@ -253,6 +260,7 @@ class StreamTelemetryPayload(BaseModel):
     alerts: List[AlertTrigger] = Field(default_factory=list)
     forensic_incident: Optional[ForensicAnomalyIncident] = None
     decision_basis: Optional[DecisionBasis] = None
+    vlm_synthesis: Optional[IncidentAnalysisResult] = None
     stream_roi: Optional[StreamROIConfig] = None
     anomaly_rationale: str = Field("NORMAL: Monitored sector within baseline parameters.")
     latency: LatencyTelemetry

@@ -24,6 +24,7 @@ from app.pipeline_utils import (
 )
 from app.edge_gatekeeper import EdgeGatekeeper
 from app.audio_trigger import AudioTransientTrigger
+from app.vlm_dispatcher import vlm_dispatcher
 from app.redis_client import redis_manager
 from app.schemas import (
     AlertRuleConfig,
@@ -35,6 +36,7 @@ from app.schemas import (
     DetectionDetail,
     DetectionResult,
     ForensicAnomalyIncident,
+    IncidentAnalysisResult,
     ROINormalizedBox,
     StreamROIConfig,
     StreamTelemetryPayload,
@@ -437,8 +439,9 @@ class MLInferenceWorker:
             sla_target_ms=settings.TARGET_LATENCY_SLA_MS,
         )
 
-        # Forensic Snapshot for Candidate Events
+        # 5. Forensic Snapshot & Cloud Multimodal VLM Synthesis for Candidate Events
         forensic_incident: Optional[ForensicAnomalyIncident] = None
+        vlm_result: Optional[IncidentAnalysisResult] = None
         now_ts = time.time()
         last_snap = self.last_snapshot_time.get(stream_id, 0.0)
         should_capture_snapshot = (
@@ -454,13 +457,34 @@ class MLInferenceWorker:
             timestamp_utc = utc_now.isoformat(timespec="milliseconds").replace("+00:00", "Z")
             epoch_ms = int(t_client * 1000)
 
+            # Asynchronous Cloud Multimodal VLM Analysis (Gemini 2.5 Flash)
+            try:
+                loop = asyncio.get_running_loop()
+                vlm_result = await loop.run_in_executor(
+                    self.thread_pool,
+                    vlm_dispatcher.analyze_candidate_event,
+                    stream_id,
+                    raw_image,
+                    delta_score,
+                    audio_db,
+                    [d.label for d in detections],
+                    [r.rule_id for r in triggered_rules],
+                )
+            except Exception as e:
+                logger.warning(f"VLM Dispatcher execution error: {e}")
+
             has_critical = any(
                 r.rule_id in ("RULE_AUDIO_TRANSIENT_SPIKE", "RULE_PROHIBITED_OBJECT", "RULE_RESTRICTED_ZONE")
                 for r in triggered_rules
             )
-            severity = "CRITICAL" if has_critical else "WARNING"
-            rule_summaries = [f"{r.rule_id}: {r.target_class or 'event'}" for r in triggered_rules]
-            anomaly_summary = " | ".join(rule_summaries)
+            severity = (vlm_result.severity.value if vlm_result else ("CRITICAL" if has_critical else "WARNING"))
+            anomaly_summary = (
+                f"{vlm_result.category.value} [{vlm_result.severity.value}]: {vlm_result.title}"
+                if vlm_result
+                else " | ".join([f"{r.rule_id}: {r.target_class or 'event'}" for r in triggered_rules])
+            )
+            if vlm_result and vlm_result.description:
+                anomaly_rationale = vlm_result.description
 
             annotated_img = draw_forensic_annotations(
                 image=raw_image,
@@ -508,6 +532,7 @@ class MLInferenceWorker:
                 visual_context=visual_ctx,
                 audio_context=audio_ctx,
                 system_telemetry=telemetry_ctx,
+                vlm_synthesis=vlm_result,
             )
 
             asyncio.create_task(
@@ -537,6 +562,7 @@ class MLInferenceWorker:
             alerts=alerts,
             forensic_incident=forensic_incident,
             decision_basis=decision_basis,
+            vlm_synthesis=vlm_result,
             stream_roi=roi_config,
             anomaly_rationale=anomaly_rationale,
             latency=latency,

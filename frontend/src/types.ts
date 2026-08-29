@@ -115,6 +115,20 @@ export interface SystemTelemetryDetail {
   pipeline_fps: number;
 }
 
+export type SeverityLevel = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+export type IncidentCategory = 'TRAFFIC' | 'INDUSTRIAL_SAFETY' | 'FACILITY_SECURITY' | 'ANOMALY';
+
+export interface IncidentAnalysisResult {
+  is_incident: boolean;
+  category: IncidentCategory;
+  severity: SeverityLevel;
+  title: string;
+  description: string;
+  entities_involved: string[];
+  recommended_action: string;
+  estimated_confidence: number;
+}
+
 export interface ForensicAnomalyIncident {
   incident_id: string;
   stream_id: string;
@@ -128,6 +142,7 @@ export interface ForensicAnomalyIncident {
   visual_context: VisualContextDetail;
   audio_context: AudioContextDetail;
   system_telemetry: SystemTelemetryDetail;
+  vlm_synthesis?: IncidentAnalysisResult;
 }
 
 export interface AlertTrigger {
@@ -169,6 +184,7 @@ export interface StreamTelemetryPayload {
   alerts: AlertTrigger[];
   forensic_incident?: ForensicAnomalyIncident;
   decision_basis?: DecisionBasis;
+  vlm_synthesis?: IncidentAnalysisResult;
   stream_roi?: StreamROIConfig;
   anomaly_rationale?: string;
   latency: LatencyTelemetry;
