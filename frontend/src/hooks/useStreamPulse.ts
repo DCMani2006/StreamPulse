@@ -479,16 +479,24 @@ export function useStreamPulse({
               });
             }
 
-            // If backend triggers alerts, grab combined snapshot and prepend
+            // If backend triggers alerts, throttle incident feed pushes to eliminate UI lag
             if (data.alerts && data.alerts.length > 0) {
-              const localSnapshot = takeCombinedSnapshot();
-              const alertsWithSnapshot = data.alerts.map((a) => ({
-                ...a,
-                id: a.id || `${a.alert_type}-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
-                snapshot_url: a.snapshot_url || data.forensic_incident?.visual_context?.snapshot_annotated_base64 || localSnapshot,
-                forensic_incident: data.forensic_incident,
-              }));
-              setIncidents((prev) => [...alertsWithSnapshot, ...prev].slice(0, 30));
+              const now = Date.now();
+              if (now - lastAlertTimeRef.current > 2500) {
+                lastAlertTimeRef.current = now;
+                const snap =
+                  data.alerts.find((a) => a.snapshot_url)?.snapshot_url ||
+                  data.forensic_incident?.visual_context?.snapshot_annotated_base64 ||
+                  takeCombinedSnapshot();
+
+                const alertsWithSnapshot = data.alerts.map((a) => ({
+                  ...a,
+                  id: a.id || `${a.alert_type}-${now}-${Math.random().toString(36).substr(2, 5)}`,
+                  snapshot_url: a.snapshot_url || snap,
+                  forensic_incident: data.forensic_incident,
+                }));
+                setIncidents((prev) => [...alertsWithSnapshot, ...prev].slice(0, 30));
+              }
             }
           } catch (e) {
             console.warn('Error parsing telemetry JSON:', e);

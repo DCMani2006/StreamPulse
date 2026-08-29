@@ -76,6 +76,7 @@ class MLInferenceWorker:
         self.audio_analyzers: Dict[str, AudioDSPAnalyzer] = {}
         self.previous_centroids: Dict[str, List[Tuple[float, float, float]]] = {}  # stream_id -> [(cx, cy, timestamp)]
         self.recent_frame_times: List[float] = []
+        self.last_snapshot_time: Dict[str, float] = {}
 
     def load_model(self) -> None:
         """Loads and warms up the Ultralytics YOLOv8 model for CPU inference."""
@@ -699,10 +700,18 @@ class MLInferenceWorker:
 
         current_fps = self.calculate_pipeline_fps()
 
-        # 6. Selective Forensic Snapshot Capture
+        # 6. Selective Forensic Snapshot Capture (Throttled to eliminate CPU/Network lag)
         forensic_incident: Optional[ForensicAnomalyIncident] = None
+        now_ts = time.time()
+        last_snap = self.last_snapshot_time.get(stream_id, 0.0)
+        should_capture_snapshot = (
+            len(triggered_rules) > 0
+            and raw_image is not None
+            and (now_ts - last_snap >= 2.5)
+        )
 
-        if len(triggered_rules) > 0 and raw_image is not None:
+        if should_capture_snapshot:
+            self.last_snapshot_time[stream_id] = now_ts
             incident_id = f"inc_{uuid.uuid4()}"
             utc_now = datetime.datetime.now(datetime.timezone.utc)
             timestamp_utc = utc_now.isoformat(timespec="milliseconds").replace("+00:00", "Z")
@@ -730,8 +739,8 @@ class MLInferenceWorker:
                 anomaly_summary=anomaly_summary,
             )
 
-            snapshot_annotated_base64 = encode_image_to_data_uri(annotated_img, quality=85)
-            snapshot_raw_base64 = encode_image_to_data_uri(raw_image, quality=80)
+            snapshot_annotated_base64 = encode_image_to_data_uri(annotated_img, quality=80)
+            snapshot_raw_base64 = encode_image_to_data_uri(raw_image, quality=75)
 
             audio_ctx = AudioContextDetail(
                 audio_anomaly_flag=bool(audio_result and audio_result.spike_detected),
