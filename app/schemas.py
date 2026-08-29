@@ -118,11 +118,13 @@ class AlertRuleConfig(BaseModel):
     velocity_spike_threshold: float = Field(0.18, description="Sudden bounding box velocity threshold for movement spike")
     audio_ema_alpha: float = Field(0.05, description="Exponential moving average alpha factor for baseline tracking")
     audio_k_sigma: float = Field(2.5, description="Dynamic threshold multiplier K in: baseline + K * sigma")
-    sustained_speech_sec_threshold: float = Field(2.0, description="Sustained speech duration threshold in seconds")
     enable_zone_rule: bool = True
     enable_occupancy_rule: bool = True
     enable_prohibited_rule: bool = True
     enable_audio_rule: bool = True
+    enable_crash_rule: bool = True
+    enable_pedestrian_strike_rule: bool = True
+    crash_iou_threshold: float = Field(0.08, description="Minimum IoU overlap between vehicles to flag a collision / crash")
 
 
 # -----------------------------------------------------------------------------

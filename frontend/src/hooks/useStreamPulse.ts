@@ -711,6 +711,66 @@ export function useStreamPulse({
                   d.normalized_box[3] > zy1
               );
 
+              // Check Vehicle Collisions & Traffic Incidents
+              const VEHICLE_LABELS = new Set(['car', 'truck', 'bus', 'motorcycle', 'bicycle']);
+              const crashAlerts: AlertTrigger[] = [];
+
+              for (let i = 0; i < localDets.length; i++) {
+                const isVehA = VEHICLE_LABELS.has(localDets[i].label.toLowerCase());
+                const isPersonA = localDets[i].label.toLowerCase() === 'person';
+
+                for (let j = i + 1; j < localDets.length; j++) {
+                  const isVehB = VEHICLE_LABELS.has(localDets[j].label.toLowerCase());
+                  const isPersonB = localDets[j].label.toLowerCase() === 'person';
+
+                  if ((isVehA && isVehB) || (isPersonA && isVehB) || (isVehA && isPersonB)) {
+                    const b1 = localDets[i].normalized_box;
+                    const b2 = localDets[j].normalized_box;
+
+                    const xL = Math.max(b1[0], b2[0]);
+                    const yT = Math.max(b1[1], b2[1]);
+                    const xR = Math.min(b1[2], b2[2]);
+                    const yB = Math.min(b1[3], b2[3]);
+
+                    if (xR > xL && yB > yT) {
+                      const inter = (xR - xL) * (yB - yT);
+                      const a1 = Math.max(1e-5, (b1[2] - b1[0]) * (b1[3] - b1[1]));
+                      const a2 = Math.max(1e-5, (b2[2] - b2[0]) * (b2[3] - b2[1]));
+                      const iou = inter / (a1 + a2 - inter);
+                      const ioa = inter / Math.min(a1, a2);
+
+                      const thresh = isPersonA || isPersonB ? 0.04 : 0.08;
+                      if (iou >= thresh || ioa >= 0.16) {
+                        const alertType =
+                          isPersonA || isPersonB
+                            ? 'pedestrian_vehicle_strike'
+                            : 'vehicle_collision';
+                        const msg =
+                          alertType === 'pedestrian_vehicle_strike'
+                            ? `CRITICAL ACCIDENT: Pedestrian-Vehicle Strike Hazard Detected`
+                            : `CRITICAL ACCIDENT: Traffic Collision / Crash Detected (${localDets[i].label.toUpperCase()} + ${localDets[j].label.toUpperCase()}) [IoU: ${Math.round(iou * 100)}%]`;
+
+                        crashAlerts.push({
+                          id: `crash-${Date.now()}-${i}-${j}`,
+                          alert_type: alertType,
+                          severity: 'critical',
+                          message: msg,
+                          stream_id: streamId,
+                          sequence_id: sequenceCounterRef.current,
+                          timestamp: tClient,
+                          details: {
+                            iou: roundNum(iou, 3),
+                            ioa: roundNum(ioa, 3),
+                            objA: localDets[i].label,
+                            objB: localDets[j].label,
+                          },
+                        });
+                      }
+                    }
+                  }
+                }
+              }
+
               const isBreached = intrusions.length > 0;
               const personCount = localDets.filter((d) => d.label === 'person').length;
 
@@ -729,20 +789,23 @@ export function useStreamPulse({
                 targetSla: 300,
               };
 
-              const alerts: AlertTrigger[] = isBreached
-                ? [
-                    {
-                      id: `alert-${Date.now()}`,
-                      alert_type: 'zone_intrusion',
-                      severity: 'critical',
-                      message: `Restricted Zone Intrusion: ${intrusions[0].label.toUpperCase()} detected in sector`,
-                      stream_id: streamId,
-                      sequence_id: sequenceCounterRef.current,
-                      timestamp: tClient,
-                      details: { intrusions },
-                    },
-                  ]
-                : [];
+              const alerts: AlertTrigger[] = [
+                ...crashAlerts,
+                ...(isBreached
+                  ? [
+                      {
+                        id: `alert-${Date.now()}`,
+                        alert_type: 'zone_intrusion',
+                        severity: 'critical' as const,
+                        message: `Restricted Zone Intrusion: ${intrusions[0].label.toUpperCase()} detected in sector`,
+                        stream_id: streamId,
+                        sequence_id: sequenceCounterRef.current,
+                        timestamp: tClient,
+                        details: { intrusions },
+                      },
+                    ]
+                  : []),
+              ];
 
               const payload: StreamTelemetryPayload = {
                 stream_id: streamId,

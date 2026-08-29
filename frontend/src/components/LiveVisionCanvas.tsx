@@ -241,9 +241,123 @@ export const LiveVisionCanvas: React.FC<LiveVisionCanvasProps> = ({
         ctx.restore();
       }
 
-      // 3. Render Real Dynamic YOLOv8 Detections
+      // 3. Pairwise Vehicle Collision & Pedestrian Strike Analysis
+      const VEHICLE_LABELS = new Set(['car', 'truck', 'bus', 'motorcycle', 'bicycle']);
+      const collisionPairs: Array<{
+        detA: any;
+        detB: any;
+        midX: number;
+        midY: number;
+        iou: number;
+      }> = [];
+      const collidingIndices = new Set<number>();
+
+      if (telemetry?.detections && telemetry.detections.length > 1) {
+        const dets = telemetry.detections;
+        for (let i = 0; i < dets.length; i++) {
+          if (dets[i].confidence < confThresh) continue;
+          const isVehA = VEHICLE_LABELS.has(dets[i].label.toLowerCase());
+          const isPersonA = dets[i].label.toLowerCase() === 'person';
+
+          for (let j = i + 1; j < dets.length; j++) {
+            if (dets[j].confidence < confThresh) continue;
+            const isVehB = VEHICLE_LABELS.has(dets[j].label.toLowerCase());
+            const isPersonB = dets[j].label.toLowerCase() === 'person';
+
+            // Vehicle-to-Vehicle Collision OR Pedestrian-to-Vehicle Strike
+            if ((isVehA && isVehB) || (isPersonA && isVehB) || (isVehA && isPersonB)) {
+              const b1 = dets[i].normalized_box;
+              const b2 = dets[j].normalized_box;
+
+              const xL = Math.max(b1[0], b2[0]);
+              const yT = Math.max(b1[1], b2[1]);
+              const xR = Math.min(b1[2], b2[2]);
+              const yB = Math.min(b1[3], b2[3]);
+
+              if (xR > xL && yB > yT) {
+                const inter = (xR - xL) * (yB - yT);
+                const a1 = Math.max(1e-5, (b1[2] - b1[0]) * (b1[3] - b1[1]));
+                const a2 = Math.max(1e-5, (b2[2] - b2[0]) * (b2[3] - b2[1]));
+                const union = a1 + a2 - inter;
+                const iou = inter / union;
+                const ioa = inter / Math.min(a1, a2);
+
+                const thresh = (isPersonA || isPersonB) ? 0.04 : 0.08;
+                if (iou >= thresh || ioa >= 0.16) {
+                  collidingIndices.add(i);
+                  collidingIndices.add(j);
+                  const cx1 = ((b1[0] + b1[2]) / 2.0) * w;
+                  const cy1 = ((b1[1] + b1[3]) / 2.0) * h;
+                  const cx2 = ((b2[0] + b2[2]) / 2.0) * w;
+                  const cy2 = ((b2[1] + b2[3]) / 2.0) * h;
+                  collisionPairs.push({
+                    detA: dets[i],
+                    detB: dets[j],
+                    midX: (cx1 + cx2) / 2.0,
+                    midY: (cy1 + cy2) / 2.0,
+                    iou,
+                  });
+                }
+              }
+            }
+          }
+        }
+      }
+
+      // Draw Tactical Crash Connection Lines & Shockwaves
+      if (collisionPairs.length > 0) {
+        collisionPairs.forEach((pair) => {
+          const b1 = pair.detA.normalized_box;
+          const b2 = pair.detB.normalized_box;
+          const cx1 = ((b1[0] + b1[2]) / 2.0) * w;
+          const cy1 = ((b1[1] + b1[3]) / 2.0) * h;
+          const cx2 = ((b2[0] + b2[2]) / 2.0) * w;
+          const cy2 = ((b2[1] + b2[3]) / 2.0) * h;
+
+          ctx.save();
+          // Animated Yellow/Red Shockwave Connection Line
+          ctx.strokeStyle = '#ef4444';
+          ctx.lineWidth = 3;
+          ctx.setLineDash([6, 4]);
+          ctx.shadowColor = '#ef4444';
+          ctx.shadowBlur = 16;
+          ctx.beginPath();
+          ctx.moveTo(cx1, cy1);
+          ctx.lineTo(cx2, cy2);
+          ctx.stroke();
+
+          // Pulsing Collision Beacon at Midpoint
+          ctx.fillStyle = '#dc2626';
+          ctx.beginPath();
+          ctx.arc(pair.midX, pair.midY, 14, 0, 2 * Math.PI);
+          ctx.fill();
+          ctx.fillStyle = '#fef08a';
+          ctx.beginPath();
+          ctx.arc(pair.midX, pair.midY, 7, 0, 2 * Math.PI);
+          ctx.fill();
+
+          // High-Impact Crash Badge
+          const crashBadge = `💥 CRASH / COLLISION DETECTED [IoU: ${Math.round(pair.iou * 100)}%]`;
+          ctx.font = 'bold 12px monospace';
+          const badgeW = ctx.measureText(crashBadge).width + 20;
+          ctx.fillStyle = '#b91c1c';
+          ctx.beginPath();
+          ctx.roundRect(pair.midX - badgeW / 2, pair.midY - 34, badgeW, 24, [6, 6, 6, 6]);
+          ctx.fill();
+          ctx.strokeStyle = '#fef08a';
+          ctx.lineWidth = 1.5;
+          ctx.stroke();
+
+          ctx.fillStyle = '#ffffff';
+          ctx.shadowBlur = 0;
+          ctx.fillText(crashBadge, pair.midX - badgeW / 2 + 10, pair.midY - 18);
+          ctx.restore();
+        });
+      }
+
+      // 4. Render Dynamic Detection Bounding Boxes
       if (telemetry?.detections && telemetry.detections.length > 0) {
-        telemetry.detections.forEach((det) => {
+        telemetry.detections.forEach((det, idx) => {
           if (det.confidence < confThresh) return;
 
           const [nx1, ny1, nx2, ny2] = det.normalized_box;
@@ -275,22 +389,32 @@ export const LiveVisionCanvas: React.FC<LiveVisionCanvasProps> = ({
             'backpack',
           ].includes(det.label.toLowerCase());
 
+          const isColliding = collidingIndices.has(idx);
           const isViolator =
-            insideRoi || isProhibited || (det as any).is_violator;
-          const boxColor = isViolator ? '#ef4444' : '#10b981';
-          const labelBg = isViolator ? '#dc2626' : '#059669';
+            isColliding || insideRoi || isProhibited || (det as any).is_violator;
+
+          const boxColor = isColliding
+            ? '#ef4444'
+            : isViolator
+            ? '#f59e0b'
+            : '#10b981';
+          const labelBg = isColliding
+            ? '#dc2626'
+            : isViolator
+            ? '#d97706'
+            : '#059669';
 
           // Draw Bounding Box with glow
           ctx.save();
           ctx.strokeStyle = boxColor;
-          ctx.lineWidth = 2.5;
+          ctx.lineWidth = isColliding ? 3.5 : 2.5;
           ctx.shadowColor = boxColor;
-          ctx.shadowBlur = isViolator ? 14 : 6;
+          ctx.shadowBlur = isColliding ? 18 : isViolator ? 12 : 6;
           ctx.strokeRect(x1, y1, boxW, boxH);
 
           // Tactical Corner Brackets
           const cornerLen = Math.min(18, boxW / 4, boxH / 4);
-          ctx.lineWidth = 4;
+          ctx.lineWidth = isColliding ? 4.5 : 3.5;
           // Top Left
           ctx.beginPath();
           ctx.moveTo(x1, y1 + cornerLen);
@@ -317,7 +441,11 @@ export const LiveVisionCanvas: React.FC<LiveVisionCanvasProps> = ({
           ctx.stroke();
 
           // Crisp Label Pill Above Box
-          const tagPrefix = isViolator ? '[ALERT] ' : '';
+          let tagPrefix = '';
+          if (isColliding) tagPrefix = '💥 [CRASH] ';
+          else if (insideRoi) tagPrefix = '⚠️ [ROI BREACH] ';
+          else if (isProhibited) tagPrefix = '🚫 [PROHIBITED] ';
+
           const tagText = `${tagPrefix}${det.label.toUpperCase()} ${Math.round(
             det.confidence * 100
           )}% ${det.tracking_id ? `[#${det.tracking_id}]` : ''}`;

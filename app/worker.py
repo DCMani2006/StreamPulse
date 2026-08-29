@@ -15,6 +15,8 @@ from ultralytics import YOLO
 from app.config import settings
 from app.pipeline_utils import (
     AudioDSPAnalyzer,
+    calculate_ioa,
+    calculate_iou,
     calculate_latency_metrics,
     decode_base64_image,
     draw_forensic_annotations,
@@ -316,6 +318,127 @@ class MLInferenceWorker:
                     confidence=0.91,
                 )
             )
+
+        # D. High-Impact Vehicle Collision / Car Crash Anomaly Detection
+        VEHICLE_CLASSES = {"car", "truck", "bus", "motorcycle", "bicycle"}
+        if getattr(config, "enable_crash_rule", True):
+            crash_iou_thresh = getattr(config, "crash_iou_threshold", 0.08)
+            num_dets = len(detections)
+            for i in range(num_dets):
+                det_a = detections[i]
+                if det_a.label.lower() not in VEHICLE_CLASSES:
+                    continue
+                for j in range(i + 1, num_dets):
+                    det_b = detections[j]
+                    if det_b.label.lower() not in VEHICLE_CLASSES:
+                        continue
+
+                    # Pairwise IoU and IoA Calculation
+                    iou = calculate_iou(det_a.normalized_box, det_b.normalized_box)
+                    ioa = calculate_ioa(det_a.normalized_box, det_b.normalized_box)
+
+                    if iou >= crash_iou_thresh or ioa >= 0.16:
+                        global_violated = True
+                        global_rule = "VEHICLE_COLLISION"
+                        global_observed = round(float(iou), 3)
+                        global_threshold = crash_iou_thresh
+
+                        id_a = det_a.tracking_id or (i + 101)
+                        id_b = det_b.tracking_id or (j + 101)
+                        crash_conf = min(0.99, round(0.88 + iou * 0.30, 4))
+
+                        global_rationale = (
+                            f"Autonomous Critical Alert: Vehicle Collision / Car Crash Detected between "
+                            f"'{det_a.label}' (#{id_a}) and '{det_b.label}' (#{id_b}) "
+                            f"[IoU={iou:.2f}, Overlap={ioa*100:.1f}%, Conf={int(crash_conf*100)}%]."
+                        )
+
+                        detection_details[i].is_violator = True
+                        detection_details[j].is_violator = True
+
+                        alerts.append(
+                            AlertTrigger(
+                                alert_type="vehicle_collision",
+                                severity="critical",
+                                message=f"CRITICAL ACCIDENT: Traffic Collision / Crash Detected ({det_a.label.upper()} + {det_b.label.upper()})",
+                                stream_id=stream_id,
+                                sequence_id=sequence_id,
+                                timestamp=now,
+                                details={
+                                    "vehicle_1": det_a.label,
+                                    "vehicle_2": det_b.label,
+                                    "iou": round(iou, 3),
+                                    "ioa": round(ioa, 3),
+                                    "box_1": det_a.box,
+                                    "box_2": det_b.box,
+                                },
+                            )
+                        )
+
+                        triggered_rules.append(
+                            TriggeredRuleDetail(
+                                rule_id="RULE_VEHICLE_COLLISION",
+                                description=global_rationale,
+                                target_class=f"{det_a.label}+{det_b.label}",
+                                confidence=crash_conf,
+                            )
+                        )
+
+        # E. Pedestrian-Vehicle Strike / Hazard Detection
+        if getattr(config, "enable_pedestrian_strike_rule", True):
+            num_dets = len(detections)
+            for i in range(num_dets):
+                det_a = detections[i]
+                for j in range(num_dets):
+                    if i == j:
+                        continue
+                    det_b = detections[j]
+                    if det_a.label.lower() == "person" and det_b.label.lower() in VEHICLE_CLASSES:
+                        iou = calculate_iou(det_a.normalized_box, det_b.normalized_box)
+                        ioa = calculate_ioa(det_a.normalized_box, det_b.normalized_box)
+                        if iou >= 0.04 or ioa >= 0.10:
+                            global_violated = True
+                            global_rule = "PEDESTRIAN_VEHICLE_STRIKE"
+                            global_observed = round(float(iou), 3)
+                            global_threshold = 0.04
+
+                            id_p = det_a.tracking_id or (i + 101)
+                            id_v = det_b.tracking_id or (j + 101)
+                            strike_conf = 0.96
+
+                            global_rationale = (
+                                f"Autonomous Life-Safety Alert: Pedestrian-Vehicle Impact Hazard detected between "
+                                f"Person (#{id_p}) and {det_b.label.upper()} (#{id_v}) [IoU={iou:.2f}]."
+                            )
+
+                            detection_details[i].is_violator = True
+                            detection_details[j].is_violator = True
+
+                            alerts.append(
+                                AlertTrigger(
+                                    alert_type="pedestrian_vehicle_strike",
+                                    severity="critical",
+                                    message=f"CRITICAL ACCIDENT: Pedestrian-Vehicle Strike Hazard Detected ({det_b.label.upper()})",
+                                    stream_id=stream_id,
+                                    sequence_id=sequence_id,
+                                    timestamp=now,
+                                    details={
+                                        "vehicle": det_b.label,
+                                        "iou": round(iou, 3),
+                                        "person_box": det_a.box,
+                                        "vehicle_box": det_b.box,
+                                    },
+                                )
+                            )
+
+                            triggered_rules.append(
+                                TriggeredRuleDetail(
+                                    rule_id="RULE_PEDESTRIAN_VEHICLE_STRIKE",
+                                    description=global_rationale,
+                                    target_class=f"person+{det_b.label}",
+                                    confidence=strike_conf,
+                                )
+                            )
 
         # ---------------------------------------------------------------------
         # Part 2: Interactive Draggable ROI Sector Spatial Breach
@@ -638,7 +761,12 @@ class MLInferenceWorker:
             epoch_ms = int(t_client * 1000)
 
             has_critical = any(
-                r.rule_id in ("RULE_RESTRICTED_ZONE", "RULE_PROHIBITED_OBJECT")
+                r.rule_id in (
+                    "RULE_RESTRICTED_ZONE",
+                    "RULE_PROHIBITED_OBJECT",
+                    "RULE_VEHICLE_COLLISION",
+                    "RULE_PEDESTRIAN_VEHICLE_STRIKE",
+                )
                 for r in triggered_rules
             )
             severity = "CRITICAL" if has_critical else "WARNING"
