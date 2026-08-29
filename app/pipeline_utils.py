@@ -501,3 +501,59 @@ def calculate_latency_metrics(
         e2e_latency_ms=round(e2e_latency_ms, 2),
         sla_met=sla_met,
     )
+
+
+class FastTracker:
+    """
+    High-Speed Centroid & Kinematic Velocity Tracker:
+    - Maintains per-track normalized coordinates (cx, cy) and last timestamp.
+    - Associates detections across frames using Euclidean distance (< 0.15 threshold).
+    - Computes 2D velocity vectors (vx, vy) and scalar magnitude (velocity).
+    """
+
+    def __init__(self):
+        self.tracks: Dict[int, Tuple[float, float, float]] = {}  # {track_id: (cx, cy, timestamp)}
+        self.next_id = 100
+
+    def update(self, detections: List[Any], current_time: float) -> Tuple[List[Any], float]:
+        new_tracks = {}
+        max_vel = 0.0
+
+        for det in detections:
+            nb = det.normalized_box if hasattr(det, "normalized_box") else det.get("normalized_box", [0, 0, 1, 1])
+            cx = (nb[0] + nb[2]) / 2.0
+            cy = (nb[1] + nb[3]) / 2.0
+
+            matched_id = None
+            min_dist = float("inf")
+
+            for tid, (prev_cx, prev_cy, prev_t) in self.tracks.items():
+                dist = math.hypot(cx - prev_cx, cy - prev_cy)
+                if dist < 0.15 and dist < min_dist:
+                    min_dist = dist
+                    matched_id = tid
+
+            if matched_id is not None:
+                prev_cx, prev_cy, prev_t = self.tracks[matched_id]
+                dt = max(current_time - prev_t, 1e-4)
+                vx = (cx - prev_cx) / dt
+                vy = (cy - prev_cy) / dt
+                vel = math.hypot(vx, vy)
+                new_tracks[matched_id] = (cx, cy, current_time)
+            else:
+                matched_id = self.next_id
+                self.next_id += 1
+                vel = 0.0
+                new_tracks[matched_id] = (cx, cy, current_time)
+
+            if hasattr(det, "tracking_id"):
+                det.tracking_id = matched_id
+            else:
+                det["id"] = matched_id
+                det["velocity"] = round(vel, 3)
+
+            max_vel = max(max_vel, vel)
+
+        self.tracks = new_tracks
+        return detections, round(max_vel, 3)
+

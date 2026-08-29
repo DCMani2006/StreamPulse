@@ -16,6 +16,7 @@ from ultralytics import YOLO
 from app.config import settings
 from app.pipeline_utils import (
     AudioDSPAnalyzer,
+    FastTracker,
     calculate_ioa,
     calculate_iou,
     calculate_latency_metrics,
@@ -81,6 +82,7 @@ class MLInferenceWorker:
         self.recent_frame_times: List[float] = []
         self.last_snapshot_time: Dict[str, float] = {}
         self.ml_anomaly_detectors: Dict[str, GeneralMLAnomalyDetector] = {}
+        self.fast_trackers: Dict[str, FastTracker] = {}
 
     def load_model(self) -> None:
         """Loads and warms up the Ultralytics YOLOv8 model for CPU inference."""
@@ -144,35 +146,19 @@ class MLInferenceWorker:
             )
         return self.ml_anomaly_detectors[stream_id]
 
+    def get_fast_tracker(self, stream_id: str) -> FastTracker:
+        """Retrieves or creates a dedicated FastTracker for kinematic trajectory tracking."""
+        if stream_id not in self.fast_trackers:
+            self.fast_trackers[stream_id] = FastTracker()
+        return self.fast_trackers[stream_id]
+
     def estimate_centroid_velocities(
         self, stream_id: str, detections: List[DetectionResult], current_time: float
     ) -> float:
-        """Estimates max bounding box centroid velocity across recent frames."""
-        current_centroids = []
-        max_vel = 0.0
-
-        for det in detections:
-            nb = det.normalized_box
-            cx = (nb[0] + nb[2]) / 2.0
-            cy = (nb[1] + nb[3]) / 2.0
-            current_centroids.append((cx, cy, current_time))
-
-        prev_list = self.previous_centroids.get(stream_id, [])
-
-        if prev_list and current_centroids:
-            for cx, cy, t in current_centroids:
-                # Find nearest previous centroid
-                min_dist = 999.0
-                for px, py, pt in prev_list:
-                    dt = max(0.01, t - pt)
-                    dist = math.sqrt((cx - px) ** 2 + (cy - py) ** 2) / dt
-                    if dist < min_dist:
-                        min_dist = dist
-                if min_dist < 999.0:
-                    max_vel = max(max_vel, min_dist)
-
-        self.previous_centroids[stream_id] = current_centroids
-        return round(max_vel, 3)
+        """Estimates kinematic velocity vectors and assigns stable tracking IDs using FastTracker."""
+        tracker = self.get_fast_tracker(stream_id)
+        _, max_vel = tracker.update(detections, current_time)
+        return max_vel
 
     def run_cv_inference(self, image: np.ndarray) -> Tuple[List[DetectionResult], int, int, int]:
         """Executes YOLOv8 object detection on a BGR image array."""

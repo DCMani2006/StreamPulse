@@ -451,6 +451,163 @@ class StreamPulseTester:
             logger.info(f"StreamPulse Test Completed. Total Frames Sent: {self.frames_sent}, Skipped: {self.frames_skipped}, Received: {self.frames_received}")
 
 
+def run_standalone_monitor(
+    video_source: Optional[str] = None,
+    model_size: int = 320,
+    conf_thresh: float = 0.45,
+    velocity_thresh: float = 0.08,
+):
+    """Ultra-fast standalone YOLOv8 + FastTracker Anomaly Monitor."""
+    import threading
+    from ultralytics import YOLO
+    from app.pipeline_utils import FastTracker
+
+    PROHIBITED_CLASSES = {"cell phone", "laptop", "knife", "scissors", "gun", "weapon"}
+    logger.info("[INIT] Loading YOLOv8n model...")
+    model = YOLO("yolov8n.pt")
+
+    def save_snapshot_async(frame_bgr, reason, timestamp):
+        def _worker():
+            filename = f"incident_{int(timestamp * 1000)}.jpg"
+            cv2.imwrite(filename, frame_bgr, [int(cv2.IMWRITE_JPEG_QUALITY), 65])
+            logger.info(f"[FORENSIC CAPTURE] Saved {filename} | Reason: {reason}")
+        threading.Thread(target=_worker, daemon=True).start()
+
+    src = 0 if video_source is None else video_source
+    cap = cv2.VideoCapture(src)
+    if video_source is None:
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+
+    tracker = FastTracker()
+    last_anomaly_snapshot_time = 0.0
+
+    logger.info("[RUNNING] Standalone monitor active. Press 'q' in OpenCV window to exit.")
+
+    while cap.isOpened():
+        t_start = time.time()
+        ret, frame = cap.read()
+        if not ret:
+            break
+
+        h, w = frame.shape[:2]
+
+        results = model.predict(
+            source=frame,
+            imgsz=model_size,
+            conf=conf_thresh,
+            verbose=False,
+            device="cpu",
+        )[0]
+
+        raw_detections = []
+        for box in results.boxes:
+            cls_id = int(box.cls[0].item())
+            cls_name = model.names[cls_id]
+            conf = float(box.conf[0].item())
+            bx1, by1, bx2, by2 = box.xyxy[0].tolist()
+
+            raw_detections.append({
+                "class": cls_name,
+                "conf": conf,
+                "normalized_box": [bx1 / w, by1 / h, bx2 / w, by2 / h],
+                "pixel_box": [int(bx1), int(by1), int(bx2), int(by2)],
+            })
+
+        detections, max_vel = tracker.update(raw_detections, t_start)
+        anomaly_detected = False
+        anomaly_reasons = []
+
+        person_count = sum(1 for d in detections if d["class"] == "person")
+        if person_count > 1:
+            anomaly_detected = True
+            anomaly_reasons.append(f"Occupancy Breach ({person_count} persons)")
+
+        for det in detections:
+            cls_name = det["class"]
+            vel = det.get("velocity", 0.0)
+            is_obj_anomaly = False
+
+            if cls_name in PROHIBITED_CLASSES:
+                is_obj_anomaly = True
+                anomaly_reasons.append(f"Prohibited Item: {cls_name}")
+            elif vel > velocity_thresh:
+                is_obj_anomaly = True
+                anomaly_reasons.append(f"Erratic Velocity: {vel:.2f}")
+
+            det["is_anomaly"] = is_obj_anomaly
+            if is_obj_anomaly:
+                anomaly_detected = True
+
+        for det in detections:
+            px1, py1, px2, py2 = det["pixel_box"]
+            cls_name = det["class"]
+            conf = det["conf"]
+            is_anom = det["is_anomaly"] or (det["class"] == "person" and person_count > 1)
+
+            if is_anom:
+                box_color = (0, 0, 255)
+                thickness = 3
+                label = f"! ANOMALY: {cls_name.upper()} {conf:.2f} !"
+            else:
+                box_color = (0, 255, 0)
+                thickness = 2
+                label = f"{cls_name} {conf:.2f}"
+
+            cv2.rectangle(frame, (px1, py1), (px2, py2), box_color, thickness)
+            (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
+            cv2.rectangle(frame, (px1, max(0, py1 - 20)), (px1 + tw, py1), box_color, -1)
+            cv2.putText(
+                frame,
+                label,
+                (px1, max(14, py1 - 5)),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.5,
+                (255, 255, 255),
+                1,
+                cv2.LINE_AA,
+            )
+
+        t_total_ms = (time.time() - t_start) * 1000.0
+        fps = 1000.0 / max(t_total_ms, 1e-3)
+
+        if anomaly_detected:
+            cv2.rectangle(frame, (0, 0), (w, 35), (0, 0, 255), -1)
+            alert_text = "CRITICAL ALERT: " + " | ".join(set(anomaly_reasons))
+            cv2.putText(
+                frame,
+                alert_text[:70],
+                (10, 24),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.6,
+                (255, 255, 255),
+                2,
+                cv2.LINE_AA,
+            )
+
+            if time.time() - last_anomaly_snapshot_time > 1.5:
+                last_anomaly_snapshot_time = time.time()
+                save_snapshot_async(frame.copy(), alert_text, last_anomaly_snapshot_time)
+
+        cv2.putText(
+            frame,
+            f"Latency: {t_total_ms:.1f}ms | FPS: {fps:.1f}",
+            (10, h - 15),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.5,
+            (0, 255, 255),
+            1,
+            cv2.LINE_AA,
+        )
+
+        cv2.imshow("StreamPulse Ultra-Fast Anomaly Monitor", frame)
+        if cv2.waitKey(1) & 0xFF == ord("q"):
+            break
+
+    cap.release()
+    cv2.destroyAllWindows()
+
+
 def parse_args():
     parser = argparse.ArgumentParser(description="StreamPulse End-to-End Test Suite")
     parser.add_argument("--stream-id", type=str, default="cam_01", help="Stream ID (default: cam_01)")
@@ -462,11 +619,17 @@ def parse_args():
     parser.add_argument("--disable-motion-sampling", dest="enable_motion_sampling", action="store_false", help="Disable edge motion/temporal decimation")
     parser.add_argument("--no-gui", action="store_true", help="Run in headless mode without opening OpenCV window")
     parser.add_argument("--duration", type=int, default=None, help="Test duration in seconds (optional)")
+    parser.add_argument("--standalone", action="store_true", help="Run standalone local OpenCV monitor loop directly without WebSocket server")
     return parser.parse_args()
 
 
 def main():
     args = parse_args()
+
+    if args.standalone:
+        run_standalone_monitor(video_source=args.video_source)
+        return
+
     tester = StreamPulseTester(
         stream_id=args.stream_id,
         host=args.host,
@@ -490,3 +653,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
