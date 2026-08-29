@@ -33,7 +33,6 @@ interface VideoStageProps {
   cameraActive: boolean;
   cameraError: string | null;
   isLoadingMedia?: boolean;
-  restrictedZone: [number, number, number, number];
   confidenceThreshold: number;
   setConfidenceThreshold: (val: number) => void;
   streamId: string;
@@ -43,31 +42,31 @@ interface VideoStageProps {
 
 const PRESET_SCENARIOS: PresetScenario[] = [
   {
-    id: 'campus',
-    title: 'Campus Hallway',
-    subtitle: 'Crowd & Restricted Zone Test',
-    description: 'High-density multi-person foot traffic monitoring with automated perimeter intrusion detection.',
+    id: 'traffic',
+    title: 'Traffic Highway Feed',
+    subtitle: 'Vehicle Collision & Accident Test',
+    description: 'Real-time multi-vehicle tracking with autonomous high-impact crash and traffic collision detection.',
     videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4',
-    zone: [0.15, 0.25, 0.85, 0.85],
-    tags: ['Multi-Person', 'High Density', 'Zone Breach'],
+    zone: [0.0, 0.0, 1.0, 1.0],
+    tags: ['Traffic Feed', 'Vehicle Collision', 'Crash Detection'],
   },
   {
     id: 'proctoring',
-    title: 'Exam Proctoring Room',
-    subtitle: 'Multi-Face & Device Anomaly Test',
-    description: 'Real-time candidate monitoring detecting unauthorized persons, secondary screen glances, and phone usage.',
+    title: 'Proctoring & Facility Cam',
+    subtitle: 'Multi-Person & Prohibited Items',
+    description: 'Autonomous monitoring detecting unauthorized persons, devices, and prohibited items.',
     videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
-    zone: [0.2, 0.1, 0.8, 0.9],
-    tags: ['Proctoring', 'Device Detection', 'Facial Tracking'],
+    zone: [0.0, 0.0, 1.0, 1.0],
+    tags: ['Facility', 'Device Detection', 'Prohibited Items'],
   },
   {
     id: 'night',
-    title: 'Night Perimeter',
-    subtitle: 'Intruder Detection & Low-Light SLA',
-    description: 'Critical infrastructure perimeter surveillance with sub-300ms intrusion trigger dispatch.',
+    title: 'Night Infrastructure',
+    subtitle: 'Kinetic Motion & Transient Spikes',
+    description: 'Surveillance feed with sub-300ms multi-modal incident trigger dispatch.',
     videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4',
-    zone: [0.25, 0.2, 0.75, 0.8],
-    tags: ['Perimeter', 'Intrusion', 'Low Latency'],
+    zone: [0.0, 0.0, 1.0, 1.0],
+    tags: ['Perimeter', 'Motion Spikes', 'Low Latency'],
   },
 ];
 
@@ -100,7 +99,6 @@ export const VideoStage: React.FC<VideoStageProps> = ({
   cameraActive,
   cameraError,
   isLoadingMedia,
-  restrictedZone: _restrictedZone,
   confidenceThreshold,
   setConfidenceThreshold,
   streamId,

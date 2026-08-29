@@ -13,14 +13,12 @@ interface UseStreamPulseProps {
   streamId: string;
   targetFps?: number;
   confidenceThreshold?: number;
-  restrictedZone?: [number, number, number, number];
 }
 
 export function useStreamPulse({
   streamId = 'cam_01',
   targetFps = 10,
   confidenceThreshold = 0.35,
-  restrictedZone = [0.2, 0.2, 0.8, 0.8],
 }: UseStreamPulseProps) {
   const [streamSource, setStreamSource] = useState<StreamSourceType>('webcam');
   const [customVideoUrl, setCustomVideoUrl] = useState<string>('');
@@ -701,16 +699,6 @@ export function useStreamPulse({
                 localDets = runMotionFallback(ctx, canvas.width, canvas.height);
               }
 
-              // Check restricted zone penetration
-              const [zx1, zy1, zx2, zy2] = restrictedZone;
-              const intrusions = localDets.filter(
-                (d) =>
-                  d.normalized_box[0] < zx2 &&
-                  d.normalized_box[2] > zx1 &&
-                  d.normalized_box[1] < zy2 &&
-                  d.normalized_box[3] > zy1
-              );
-
               // Check Vehicle Collisions & Traffic Incidents
               const VEHICLE_LABELS = new Set(['car', 'truck', 'bus', 'motorcycle', 'bicycle']);
               const crashAlerts: AlertTrigger[] = [];
@@ -771,7 +759,6 @@ export function useStreamPulse({
                 }
               }
 
-              const isBreached = intrusions.length > 0;
               const personCount = localDets.filter((d) => d.label === 'person').length;
 
               const simLatency: LatencyHistoryPoint = {
@@ -789,23 +776,7 @@ export function useStreamPulse({
                 targetSla: 300,
               };
 
-              const alerts: AlertTrigger[] = [
-                ...crashAlerts,
-                ...(isBreached
-                  ? [
-                      {
-                        id: `alert-${Date.now()}`,
-                        alert_type: 'zone_intrusion',
-                        severity: 'critical' as const,
-                        message: `Restricted Zone Intrusion: ${intrusions[0].label.toUpperCase()} detected in sector`,
-                        stream_id: streamId,
-                        sequence_id: sequenceCounterRef.current,
-                        timestamp: tClient,
-                        details: { intrusions },
-                      },
-                    ]
-                  : []),
-              ];
+              const alerts: AlertTrigger[] = [...crashAlerts];
 
               const payload: StreamTelemetryPayload = {
                 stream_id: streamId,
@@ -842,23 +813,15 @@ export function useStreamPulse({
               setLatestTelemetry(payload);
               setLatencyHistory((prev) => [...prev.slice(-39), simLatency]);
 
-              // Throttle alert incident pushes
-              if (isBreached && Date.now() - lastAlertTimeRef.current > 3000) {
+              // Push real crash alerts to incident feed
+              if (crashAlerts.length > 0 && Date.now() - lastAlertTimeRef.current > 2500) {
                 lastAlertTimeRef.current = Date.now();
                 const snapshot = takeCombinedSnapshot();
-                setIncidents((prev) => [
-                  {
-                    id: `breach-${Date.now()}`,
-                    alert_type: 'zone_intrusion',
-                    severity: 'critical',
-                    message: `Restricted Zone Intrusion: ${intrusions[0].label.toUpperCase()} in monitored sector`,
-                    stream_id: streamId,
-                    sequence_id: sequenceCounterRef.current,
-                    timestamp: tClient,
-                    snapshot_url: snapshot,
-                  },
-                  ...prev.slice(0, 29),
-                ]);
+                const alertsWithSnapshot = crashAlerts.map((a) => ({
+                  ...a,
+                  snapshot_url: snapshot,
+                }));
+                setIncidents((prev) => [...alertsWithSnapshot, ...prev].slice(0, 29));
               }
             }
           } catch (e) {
@@ -880,7 +843,6 @@ export function useStreamPulse({
     streamId,
     streamSource,
     confidenceThreshold,
-    restrictedZone,
     audioLevel,
     audioVadActive,
     runMotionFallback,

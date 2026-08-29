@@ -441,47 +441,6 @@ class MLInferenceWorker:
                             )
 
         # ---------------------------------------------------------------------
-        # Part 2: Interactive Draggable ROI Sector Spatial Breach
-        # ---------------------------------------------------------------------
-        spatial_violated = False
-        spatial_rule = "NONE"
-        spatial_observed = None
-        spatial_threshold = None
-        spatial_rationale = ""
-
-        if roi_config.roi_enabled:
-            rn = roi_config.roi_normalized
-            roi_box = [rn.x1, rn.y1, rn.x2, rn.y2]
-
-            for idx, det in enumerate(detections):
-                nb = det.normalized_box
-                cx = (nb[0] + nb[2]) / 2.0
-                cy = (nb[1] + nb[3]) / 2.0
-
-                # Centroid inside interactive ROI box
-                centroid_inside = (rn.x1 <= cx <= rn.x2) and (rn.y1 <= cy <= rn.y2)
-                penetrated, ratio = is_box_inside_zone(nb, roi_box, penetration_threshold=0.10)
-
-                if centroid_inside or penetrated:
-                    spatial_violated = True
-                    spatial_rule = "RESTRICTED_ROI_SPATIAL"
-                    spatial_observed = round(cx, 3)
-                    spatial_threshold = round(rn.x1, 3)
-                    spatial_rationale = (
-                        f"Spatial ROI Breach: '{det.label}' centroid (cx={cx:.2f}, cy={cy:.2f}) entered "
-                        f"user-defined sector '{roi_config.roi_label}' [{rn.x1:.2f}, {rn.y1:.2f}, {rn.x2:.2f}, {rn.y2:.2f}]."
-                    )
-                    detection_details[idx].is_violator = True
-                    triggered_rules.append(
-                        TriggeredRuleDetail(
-                            rule_id="RULE_RESTRICTED_ZONE",
-                            description=spatial_rationale,
-                            target_class=det.label,
-                            confidence=det.confidence,
-                        )
-                    )
-
-        # ---------------------------------------------------------------------
         # Audio Trigger Evaluation with Dynamic Noise Profiling & False-Positive Elimination
         # ---------------------------------------------------------------------
         audio_violated = False
@@ -518,17 +477,17 @@ class MLInferenceWorker:
                     audio_rule = "SPECTRAL_TRANSIENT_SPIKE"
                     audio_rationale = (
                         f"Abrupt non-harmonic transient acoustic impact detected (Flatness={audio_result.spectral_flatness:.2f}, "
-                        f"High-Freq Ratio={audio_result.high_freq_ratio:.2f}); not classified as conversational voice."
+                        f"High-Freq Ratio={audio_result.high_freq_ratio:.2f}, {delta_str} over baseline)."
                     )
                     triggered_rules.append(
                         TriggeredRuleDetail(
                             rule_id="RULE_AUDIO_SPIKE",
                             description=audio_rationale,
-                            target_class="acoustic_transient",
-                            confidence=min(1.0, round(obs_rms / 0.5, 4)),
+                            target_class="acoustic_spike",
+                            confidence=min(1.0, round(obs_rms / 0.4, 4)),
                         )
                     )
-                elif is_spike and is_harmonic and person_count == 1 and not (global_violated or spatial_violated):
+                elif is_spike and is_harmonic and person_count == 1 and not global_violated:
                     audio_violated = False
                     audio_rationale = (
                         f"Single-subject harmonic speech spike ({obs_rms:.3f} RMS, {delta_str} delta) classified as benign vocalization; "
@@ -574,30 +533,16 @@ class MLInferenceWorker:
                         )
 
         # ---------------------------------------------------------------------
-        # Classify Trigger Type: AUTONOMOUS_GLOBAL vs SPATIAL_ROI vs COMBINED
+        # Classify Trigger Type: AUTONOMOUS_GLOBAL
         # ---------------------------------------------------------------------
-        visual_violated = global_violated or spatial_violated
-        if global_violated and spatial_violated:
-            trigger_type = "COMBINED"
-            vis_rule = f"{global_rule} + {spatial_rule}"
-            vis_rationale = f"{global_rationale} | {spatial_rationale}"
-            vis_obs = global_observed or spatial_observed
-            vis_thresh = global_threshold or spatial_threshold
-            vis_classification = "COMBINED"
-        elif global_violated:
+        visual_violated = global_violated
+        if global_violated:
             trigger_type = "AUTONOMOUS_GLOBAL"
             vis_rule = global_rule
             vis_rationale = global_rationale
             vis_obs = global_observed
             vis_thresh = global_threshold
             vis_classification = "AUTONOMOUS_GLOBAL"
-        elif spatial_violated:
-            trigger_type = "SPATIAL_ROI"
-            vis_rule = spatial_rule
-            vis_rationale = spatial_rationale
-            vis_obs = spatial_observed
-            vis_thresh = spatial_threshold
-            vis_classification = "SPATIAL_ROI"
         else:
             trigger_type = "NONE"
             vis_rule = "NONE"
@@ -773,13 +718,10 @@ class MLInferenceWorker:
             rule_summaries = [f"{r.rule_id}: {r.target_class or 'event'}" for r in triggered_rules]
             anomaly_summary = " | ".join(rule_summaries)
 
-            rn = roi_config.roi_normalized
-            active_zone = [rn.x1, rn.y1, rn.x2, rn.y2] if roi_config.roi_enabled else None
-
             annotated_img = draw_forensic_annotations(
                 image=raw_image,
                 detections=[d.model_dump(by_alias=True) for d in detection_details],
-                restricted_zone=active_zone,
+                restricted_zone=None,
                 incident_id=incident_id,
                 timestamp_utc=timestamp_utc,
                 anomaly_summary=anomaly_summary,

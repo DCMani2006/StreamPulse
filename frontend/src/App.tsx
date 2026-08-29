@@ -5,27 +5,13 @@ import { TelemetryKPIs } from './components/TelemetryKPIs';
 import { LatencyChart } from './components/LatencyChart';
 import { AudioVisualizer } from './components/AudioVisualizer';
 import { IncidentFeed } from './components/IncidentFeed';
-import { ZoneConfigModal } from './components/ZoneConfigModal';
 import { useStreamPulse } from './hooks/useStreamPulse';
-import { AlertRuleConfig } from './types';
 
 export const App: React.FC = () => {
   const [streamId] = useState<string>('cam_01');
   const [confidenceThreshold, setConfidenceThreshold] = useState<number>(0.35);
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
-  const [isConfigOpen, setIsConfigOpen] = useState<boolean>(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
-
-  // Dynamic Alert Rules State
-  const [alertConfig, setAlertConfig] = useState<AlertRuleConfig>({
-    stream_id: streamId,
-    max_persons: 4,
-    restricted_zone: [0.2, 0.2, 0.8, 0.8],
-    audio_energy_threshold: 0.05,
-    enable_person_alert: true,
-    enable_zone_alert: true,
-    enable_audio_alert: true,
-  });
 
   const {
     videoRef,
@@ -50,7 +36,6 @@ export const App: React.FC = () => {
     streamId,
     targetFps: 10,
     confidenceThreshold,
-    restrictedZone: alertConfig.restricted_zone,
   });
 
   const triggerToast = (msg: string) => {
@@ -77,21 +62,6 @@ export const App: React.FC = () => {
     }
   };
 
-  const handleSaveConfig = async (newConfig: AlertRuleConfig) => {
-    setAlertConfig(newConfig);
-    triggerToast('Perimeter Zone & Alert Thresholds Applied');
-
-    try {
-      await fetch('/api/v1/alerts/config', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(newConfig),
-      });
-    } catch (e) {
-      console.warn('Backend alert config sync skipped');
-    }
-  };
-
   return (
     <div className="min-h-screen bg-[#08090e] text-slate-100 flex flex-col font-sans selection:bg-emerald-500 selection:text-black">
       
@@ -103,7 +73,7 @@ export const App: React.FC = () => {
         isFullscreen={isFullscreen}
         onToggleFullscreen={handleToggleFullscreen}
         onTakeSnapshot={handleSnapshotClick}
-        onOpenSettings={() => setIsConfigOpen(true)}
+        onOpenSettings={() => triggerToast('System Running in Autonomous AI Mode')}
       />
 
       {/* Main Command Center Stage */}
@@ -126,7 +96,6 @@ export const App: React.FC = () => {
             currentFps={currentFps}
             cameraActive={cameraActive}
             cameraError={cameraError}
-            restrictedZone={alertConfig.restricted_zone}
             confidenceThreshold={confidenceThreshold}
             setConfidenceThreshold={setConfidenceThreshold}
             streamId={streamId}
@@ -160,14 +129,6 @@ export const App: React.FC = () => {
         </div>
 
       </main>
-
-      {/* Dynamic Zone & Alert Thresholds Modal */}
-      <ZoneConfigModal
-        isOpen={isConfigOpen}
-        onClose={() => setIsConfigOpen(false)}
-        config={alertConfig}
-        onSave={handleSaveConfig}
-      />
 
       {/* Toast Notification */}
       {toastMessage && (
