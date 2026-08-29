@@ -90,8 +90,10 @@ export const LiveVisionCanvas: React.FC<LiveVisionCanvasProps> = ({
                 const iou = inter / union;
                 const ioa = inter / Math.min(a1, a2);
 
-                const thresh = isPersonA || isPersonB ? 0.04 : 0.08;
-                if (iou >= thresh || ioa >= 0.16) {
+                const isPedStrike = isPersonA || isPersonB;
+                const iouThresh = isPedStrike ? 0.10 : 0.18;
+                const ioaThresh = isPedStrike ? 0.22 : 0.35;
+                if (iou >= iouThresh || ioa >= ioaThresh) {
                   collidingIndices.add(i);
                   collidingIndices.add(j);
                   const cx1 = ((b1[0] + b1[2]) / 2.0) * w;

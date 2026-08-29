@@ -75,7 +75,7 @@ export function useStreamPulse({
   // Combined Snapshot Grabber: Merges current <video> frame + <canvas> HUD overlay
   const takeCombinedSnapshot = useCallback((): string | undefined => {
     const video = videoRef.current;
-    if (!video || video.readyState < 2) return undefined;
+    if (!video) return undefined;
 
     try {
       const w = video.videoWidth || 1280;
@@ -87,12 +87,26 @@ export function useStreamPulse({
       const ctx = mergeCanvas.getContext('2d');
       if (!ctx) return undefined;
 
-      // 1. Draw raw video frame
-      ctx.drawImage(video, 0, 0, w, h);
+      // 1. Draw raw video frame (if available and ready)
+      if (video.readyState >= 2) {
+        try {
+          ctx.drawImage(video, 0, 0, w, h);
+        } catch (imgErr) {
+          ctx.fillStyle = '#0b0f19';
+          ctx.fillRect(0, 0, w, h);
+        }
+      } else {
+        ctx.fillStyle = '#0b0f19';
+        ctx.fillRect(0, 0, w, h);
+      }
 
       // 2. Draw overlay canvas if present
       if (overlayCanvasRef.current) {
-        ctx.drawImage(overlayCanvasRef.current, 0, 0, w, h);
+        try {
+          ctx.drawImage(overlayCanvasRef.current, 0, 0, w, h);
+        } catch (overlayErr) {
+          // ignore overlay draw error
+        }
       }
 
       // 3. Watermark timestamp
@@ -100,18 +114,44 @@ export function useStreamPulse({
       const timeStr = `${now.toLocaleDateString()} ${now.toLocaleTimeString()}.${String(
         now.getMilliseconds()
       ).padStart(3, '0')}`;
-      ctx.fillStyle = 'rgba(0,0,0,0.65)';
-      ctx.fillRect(w - 380, h - 35, 370, 30);
+      ctx.fillStyle = 'rgba(0,0,0,0.75)';
+      ctx.fillRect(w - 420, h - 40, 410, 34);
       ctx.fillStyle = '#10b981';
-      ctx.font = 'bold 14px monospace';
-      ctx.fillText(`STREAMPULSE CAPTURE | ${timeStr}`, w - 370, h - 14);
+      ctx.font = 'bold 13px monospace';
+      ctx.fillText(`STREAMPULSE FORENSIC CAPTURE | ${timeStr}`, w - 405, h - 18);
 
-      return mergeCanvas.toDataURL('image/jpeg', 0.9);
+      try {
+        return mergeCanvas.toDataURL('image/jpeg', 0.85);
+      } catch (taintErr) {
+        console.warn('Canvas export tainted, generating fallback forensic card:', taintErr);
+        // Fallback untainted canvas
+        const fallbackCanvas = document.createElement('canvas');
+        fallbackCanvas.width = 640;
+        fallbackCanvas.height = 360;
+        const fCtx = fallbackCanvas.getContext('2d');
+        if (fCtx) {
+          fCtx.fillStyle = '#080a10';
+          fCtx.fillRect(0, 0, 640, 360);
+          fCtx.strokeStyle = '#ef4444';
+          fCtx.lineWidth = 2;
+          fCtx.strokeRect(10, 10, 620, 340);
+          fCtx.fillStyle = '#ef4444';
+          fCtx.font = 'bold 16px monospace';
+          fCtx.fillText('💥 STREAMPULSE INCIDENT SNAPSHOT', 30, 45);
+          fCtx.fillStyle = '#ffffff';
+          fCtx.font = '13px monospace';
+          fCtx.fillText(`UTC: ${timeStr}`, 30, 75);
+          fCtx.fillText(`STREAM ID: ${streamId}`, 30, 95);
+          fCtx.fillText('Status: CRITICAL ACCIDENT DETECTED', 30, 120);
+          return fallbackCanvas.toDataURL('image/jpeg', 0.85);
+        }
+        return undefined;
+      }
     } catch (e) {
       console.warn('Snapshot capture failed:', e);
       return undefined;
     }
-  }, []);
+  }, [streamId]);
 
   // Trigger manual snapshot download + incident feed entry
   const triggerManualSnapshot = useCallback(() => {
@@ -441,11 +481,12 @@ export function useStreamPulse({
 
             // If backend triggers alerts, grab combined snapshot and prepend
             if (data.alerts && data.alerts.length > 0) {
-              const snapshot = takeCombinedSnapshot();
+              const localSnapshot = takeCombinedSnapshot();
               const alertsWithSnapshot = data.alerts.map((a) => ({
                 ...a,
-                id: `${a.alert_type}-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
-                snapshot_url: snapshot,
+                id: a.id || `${a.alert_type}-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+                snapshot_url: a.snapshot_url || data.forensic_incident?.visual_context?.snapshot_annotated_base64 || localSnapshot,
+                forensic_incident: data.forensic_incident,
               }));
               setIncidents((prev) => [...alertsWithSnapshot, ...prev].slice(0, 30));
             }
@@ -727,8 +768,10 @@ export function useStreamPulse({
                       const iou = inter / (a1 + a2 - inter);
                       const ioa = inter / Math.min(a1, a2);
 
-                      const thresh = isPersonA || isPersonB ? 0.04 : 0.08;
-                      if (iou >= thresh || ioa >= 0.16) {
+                      const isPedStrike = isPersonA || isPersonB;
+                      const iouThresh = isPedStrike ? 0.10 : 0.18;
+                      const ioaThresh = isPedStrike ? 0.22 : 0.35;
+                      if (iou >= iouThresh || ioa >= ioaThresh) {
                         const alertType =
                           isPersonA || isPersonB
                             ? 'pedestrian_vehicle_strike'

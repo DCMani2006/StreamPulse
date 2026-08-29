@@ -108,23 +108,23 @@ class AlertRuleConfig(BaseModel):
     """Dynamic alert and multi-modal context configuration for a stream."""
     stream_id: str
     operating_mode: str = Field("security", description="'security' (perimeter/intrusion) or 'proctoring' (exam room)")
-    max_persons: int = Field(1, description="Maximum number of detected persons before triggering occupancy breach (default=1)")
+    max_persons: int = Field(10, description="Maximum number of detected persons before triggering occupancy breach (default=10)")
     min_persons: Optional[int] = Field(None, description="Minimum number of detected persons (e.g. 1 in proctoring; 0 is a breach)")
     prohibited_classes: List[str] = Field(
-        default=["cell phone", "knife", "laptop", "scissors", "backpack", "book"],
+        default=["knife", "scissors", "gun", "weapon"],
         description="List of prohibited object classes"
     )
-    prohibited_confidence_threshold: float = Field(0.50, description="Minimum confidence for prohibited objects")
-    velocity_spike_threshold: float = Field(0.18, description="Sudden bounding box velocity threshold for movement spike")
+    prohibited_confidence_threshold: float = Field(0.55, description="Minimum confidence for prohibited objects")
+    velocity_spike_threshold: float = Field(0.25, description="Sudden bounding box velocity threshold for movement spike")
     audio_ema_alpha: float = Field(0.05, description="Exponential moving average alpha factor for baseline tracking")
     audio_k_sigma: float = Field(2.5, description="Dynamic threshold multiplier K in: baseline + K * sigma")
-    enable_zone_rule: bool = True
-    enable_occupancy_rule: bool = True
+    enable_zone_rule: bool = False
+    enable_occupancy_rule: bool = False
     enable_prohibited_rule: bool = True
     enable_audio_rule: bool = True
     enable_crash_rule: bool = True
     enable_pedestrian_strike_rule: bool = True
-    crash_iou_threshold: float = Field(0.08, description="Minimum IoU overlap between vehicles to flag a collision / crash")
+    crash_iou_threshold: float = Field(0.18, description="Minimum IoU overlap between vehicles to flag a collision / crash")
 
 
 # -----------------------------------------------------------------------------

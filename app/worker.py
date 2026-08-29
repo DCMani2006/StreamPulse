@@ -322,7 +322,7 @@ class MLInferenceWorker:
         # D. High-Impact Vehicle Collision / Car Crash Anomaly Detection
         VEHICLE_CLASSES = {"car", "truck", "bus", "motorcycle", "bicycle"}
         if getattr(config, "enable_crash_rule", True):
-            crash_iou_thresh = getattr(config, "crash_iou_threshold", 0.08)
+            crash_iou_thresh = getattr(config, "crash_iou_threshold", 0.18)
             num_dets = len(detections)
             for i in range(num_dets):
                 det_a = detections[i]
@@ -337,7 +337,7 @@ class MLInferenceWorker:
                     iou = calculate_iou(det_a.normalized_box, det_b.normalized_box)
                     ioa = calculate_ioa(det_a.normalized_box, det_b.normalized_box)
 
-                    if iou >= crash_iou_thresh or ioa >= 0.16:
+                    if iou >= crash_iou_thresh or ioa >= 0.35:
                         global_violated = True
                         global_rule = "VEHICLE_COLLISION"
                         global_observed = round(float(iou), 3)
@@ -396,11 +396,11 @@ class MLInferenceWorker:
                     if det_a.label.lower() == "person" and det_b.label.lower() in VEHICLE_CLASSES:
                         iou = calculate_iou(det_a.normalized_box, det_b.normalized_box)
                         ioa = calculate_ioa(det_a.normalized_box, det_b.normalized_box)
-                        if iou >= 0.04 or ioa >= 0.10:
+                        if iou >= 0.10 or ioa >= 0.22:
                             global_violated = True
                             global_rule = "PEDESTRIAN_VEHICLE_STRIKE"
                             global_observed = round(float(iou), 3)
-                            global_threshold = 0.04
+                            global_threshold = 0.10
 
                             id_p = det_a.tracking_id or (i + 101)
                             id_v = det_b.tracking_id or (j + 101)
