@@ -1,0 +1,88 @@
+version: "3.9"
+
+services:
+  # ---------------------------------------------------------------------------
+  # Redis 7 Message Broker, Streams Queue, and Pub/Sub Backplane
+  # ---------------------------------------------------------------------------
+  redis:
+    image: redis:7.2-alpine
+    container_name: streampulse-redis
+    command: >
+      redis-server
+      --save 60 1
+      --loglevel notice
+      --maxmemory 512mb
+      --maxmemory-policy allkeys-lru
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - streampulse-net
+
+  # ---------------------------------------------------------------------------
+  # StreamPulse FastAPI Gateway (Ingestion, REST APIs & Telemetry Broadcast)
+  # ---------------------------------------------------------------------------
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: streampulse-app
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
+    ports:
+      - "8000:8000"
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - ENVIRONMENT=production
+      - LOG_LEVEL=INFO
+      - STREAM_RAW_VIDEO=stream:video:raw
+      - CONSUMER_GROUP_NAME=streampulse_workers
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - streampulse-net
+
+  # ---------------------------------------------------------------------------
+  # Distributed ML Analytics Worker (YOLOv8 Object Detection & Audio VAD)
+  # ---------------------------------------------------------------------------
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: streampulse-worker-1
+    command: ["python", "-m", "app.worker"]
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - ENVIRONMENT=production
+      - LOG_LEVEL=INFO
+      - YOLO_MODEL_PATH=yolov8n.pt
+      - YOLO_IMAGE_SIZE=320
+      - YOLO_DEVICE=cpu
+      - STREAM_RAW_VIDEO=stream:video:raw
+      - CONSUMER_GROUP_NAME=streampulse_workers
+    depends_on:
+      redis:
+        condition: service_healthy
+      app:
+        condition: service_started
+    restart: unless-stopped
+    networks:
+      - streampulse-net
+
+volumes:
+  redis_data:
+    driver: local
+
+networks:
+  streampulse-net:
+    driver: bridge
