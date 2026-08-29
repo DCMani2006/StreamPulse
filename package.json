@@ -1,0 +1,9 @@
+{
+  "name": "streampulse",
+  "version": "1.0.0",
+  "private": true,
+  "description": "StreamPulse - Edge-Native Stream Intelligence & Forensic Anomaly Pipeline",
+  "scripts": {
+    "build": "npm --prefix frontend install && npm --prefix frontend run build"
+  }
+}
