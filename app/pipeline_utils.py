@@ -1,0 +1,459 @@
+import base64
+import io
+import logging
+import math
+from typing import Any, Dict, List, Optional, Tuple, Union
+import numpy as np
+
+try:
+    import cv2
+    HAS_CV2 = True
+except ImportError:
+    HAS_CV2 = False
+
+try:
+    from PIL import Image, ImageDraw, ImageFont
+    HAS_PIL = True
+except ImportError:
+    HAS_PIL = False
+
+from app.schemas import AudioAnalysisResult, LatencyTelemetry
+
+logger = logging.getLogger("streampulse.pipeline")
+
+
+class AudioDSPAnalyzer:
+    """
+    Dynamic Ambient Noise Profiler and Spectral Feature Extractor:
+    - Tracks ambient noise baseline via Online Exponential Moving Average (EMA, alpha=0.05).
+    - Computes continuous ambient standard deviation (sigma) and dynamic threshold (baseline + K*sigma).
+    - Extracts spectral features: Zero-Crossing Rate (ZCR), High-Frequency Energy Ratio (>3.5kHz),
+      and Spectral Flatness (Wiener entropy) to distinguish harmonic speech from abrupt transient impacts/shrieks.
+    - Tracks sustained speech duration to evaluate proctoring/multi-speaker constraints.
+    """
+
+    def __init__(self, alpha: float = 0.05, k_sigma: float = 2.5):
+        self.alpha = alpha
+        self.k_sigma = k_sigma
+        self.baseline_rms = 0.03
+        self.ambient_var = 0.0004
+        self.initialized = False
+        self.sustained_speech_sec = 0.0
+        self.last_process_time: Optional[float] = None
+
+    def process_chunk(
+        self,
+        audio_data: Union[str, bytes],
+        sample_rate: int = 16000,
+        current_time: Optional[float] = None,
+    ) -> AudioAnalysisResult:
+        """Processes raw PCM audio chunk and returns full spectral analysis and dynamic baseline."""
+        now = current_time or 0.0
+        time_delta = 0.1  # default 100ms
+        if self.last_process_time is not None and now > self.last_process_time:
+            time_delta = min(0.5, now - self.last_process_time)
+        self.last_process_time = now
+
+        try:
+            if isinstance(audio_data, str):
+                if "," in audio_data:
+                    audio_data = audio_data.split(",", 1)[1]
+                raw_bytes = base64.b64decode(audio_data)
+            else:
+                raw_bytes = audio_data
+
+            if not raw_bytes or len(raw_bytes) < 4:
+                return self._empty_result()
+
+            if len(raw_bytes) % 2 == 0:
+                samples = np.frombuffer(raw_bytes, dtype=np.int16).astype(np.float32) / 32768.0
+            else:
+                samples = np.frombuffer(raw_bytes, dtype=np.float32)
+
+            if len(samples) == 0:
+                return self._empty_result()
+
+            # 1. RMS Energy Calculation
+            energy_rms = float(np.sqrt(np.mean(np.square(samples))))
+            energy_db = float(20.0 * math.log10(max(energy_rms, 1e-5)))
+
+            # 2. Zero-Crossing Rate (ZCR)
+            signs = np.sign(samples)
+            signs[signs == 0] = 1
+            zcr = float(np.sum(np.abs(np.diff(signs))) / (2.0 * len(samples)))
+
+            # 3. Spectral Features via FFT
+            dominant_freq = 0.0
+            high_freq_ratio = 0.0
+            spectral_flatness = 0.0
+
+            if len(samples) >= 64:
+                fft_vals = np.abs(np.fft.rfft(samples))
+                power_spec = np.square(fft_vals) / len(samples)
+                freqs = np.fft.rfftfreq(len(samples), d=1.0 / sample_rate)
+
+                # Dominant Peak Frequency
+                peak_idx = int(np.argmax(fft_vals))
+                dominant_freq = float(freqs[peak_idx])
+
+                # High-Frequency Energy Ratio (>3.5 kHz)
+                total_power = float(np.sum(power_spec))
+                if total_power > 1e-9:
+                    high_freq_mask = freqs >= 3500.0
+                    high_power = float(np.sum(power_spec[high_freq_mask]))
+                    high_freq_ratio = float(high_power / total_power)
+
+                # Spectral Flatness (Wiener Entropy: Geometric Mean / Arithmetic Mean)
+                pos_power = power_spec + 1e-12
+                geom_mean = float(np.exp(np.mean(np.log(pos_power))))
+                arith_mean = float(np.mean(pos_power))
+                if arith_mean > 1e-12:
+                    spectral_flatness = float(min(1.0, geom_mean / arith_mean))
+
+            # 4. Voiced Harmonic Speech vs Transient Non-Speech Impact
+            # Harmonic speech features low flatness (<= 0.42), low high-freq ratio (<= 0.40), and moderate ZCR
+            speech_harmonic_detected = (
+                (energy_rms > 0.015)
+                and (spectral_flatness <= 0.42)
+                and (high_freq_ratio <= 0.40)
+                and (0.02 <= zcr <= 0.45)
+            )
+
+            # Heuristic Voice Activity
+            vad_active = speech_harmonic_detected or ((energy_rms > 0.018) and (0.02 <= zcr <= 0.50))
+
+            # Track sustained speech duration
+            if vad_active:
+                self.sustained_speech_sec += time_delta
+            else:
+                self.sustained_speech_sec = max(0.0, self.sustained_speech_sec - time_delta * 1.5)
+
+            # 5. Online EMA Ambient Noise Profiler Updates
+            if not self.initialized:
+                self.baseline_rms = energy_rms
+                self.ambient_var = 0.0004
+                self.initialized = True
+            else:
+                # Update baseline when energy is not an extreme transient spike
+                if energy_rms <= self.baseline_rms * 3.5:
+                    delta = energy_rms - self.baseline_rms
+                    self.baseline_rms = (1.0 - self.alpha) * self.baseline_rms + self.alpha * energy_rms
+                    self.ambient_var = (1.0 - self.alpha) * self.ambient_var + self.alpha * (delta ** 2)
+
+            ambient_std = float(math.sqrt(max(self.ambient_var, 1e-6)))
+            dynamic_thresh = float(self.baseline_rms + self.k_sigma * ambient_std)
+
+            # Delta percentage relative to ambient baseline
+            if self.baseline_rms > 1e-5:
+                delta_pct = ((energy_rms - self.baseline_rms) / self.baseline_rms) * 100.0
+                delta_str = f"{'+' if delta_pct >= 0 else ''}{int(delta_pct)}%"
+            else:
+                delta_str = "+0%"
+
+            # Transient or acoustic spike condition
+            spike_detected = (energy_rms > dynamic_thresh) and (energy_rms - self.baseline_rms > 0.025)
+
+            return AudioAnalysisResult(
+                energy_rms=round(energy_rms, 4),
+                energy_db=round(energy_db, 2),
+                zero_crossing_rate=round(zcr, 4),
+                voice_activity_detected=vad_active,
+                spike_detected=spike_detected,
+                dominant_frequency_hz=round(dominant_freq, 2),
+                baseline_rms=round(self.baseline_rms, 4),
+                ambient_std_rms=round(ambient_std, 4),
+                dynamic_threshold_rms=round(dynamic_thresh, 4),
+                high_freq_ratio=round(high_freq_ratio, 4),
+                spectral_flatness=round(spectral_flatness, 4),
+                speech_harmonic_detected=speech_harmonic_detected,
+                delta_percentage_str=delta_str,
+            )
+        except Exception as e:
+            logger.warning(f"Error in AudioDSPAnalyzer: {e}")
+            return self._empty_result()
+
+    def _empty_result(self) -> AudioAnalysisResult:
+        ambient_std = float(math.sqrt(max(self.ambient_var, 1e-6)))
+        return AudioAnalysisResult(
+            energy_rms=0.0,
+            energy_db=-100.0,
+            zero_crossing_rate=0.0,
+            voice_activity_detected=False,
+            spike_detected=False,
+            dominant_frequency_hz=0.0,
+            baseline_rms=round(self.baseline_rms, 4),
+            ambient_std_rms=round(ambient_std, 4),
+            dynamic_threshold_rms=round(self.baseline_rms + self.k_sigma * ambient_std, 4),
+            high_freq_ratio=0.0,
+            spectral_flatness=0.0,
+            speech_harmonic_detected=False,
+            delta_percentage_str="+0%",
+        )
+
+
+def decode_base64_image(base64_str: str) -> Optional[np.ndarray]:
+    """
+    Safely decodes a base64 encoded image string (JPEG/PNG) into an OpenCV BGR numpy array.
+    Uses OpenCV C++ decoder if available, with PIL fallback.
+    Handles data URI prefixes and invalid strings gracefully.
+    """
+    if not base64_str:
+        return None
+
+    try:
+        if "," in base64_str:
+            base64_str = base64_str.split(",", 1)[1]
+
+        image_bytes = base64.b64decode(base64_str)
+        if len(image_bytes) == 0:
+            return None
+
+        if HAS_CV2:
+            np_arr = np.frombuffer(image_bytes, dtype=np.uint8)
+            img = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+            return img
+        elif HAS_PIL:
+            pil_img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+            rgb_arr = np.array(pil_img)
+            bgr_arr = rgb_arr[:, :, ::-1].copy()
+            return bgr_arr
+        else:
+            logger.error("Neither OpenCV nor Pillow is available for image decoding")
+            return None
+    except Exception as e:
+        logger.warning(f"Error decoding base64 image: {e}")
+        return None
+
+
+def encode_image_to_base64(image: np.ndarray, quality: int = 80) -> str:
+    """Encodes an OpenCV BGR image to base64 JPEG format."""
+    if HAS_CV2:
+        encode_params = [int(cv2.IMWRITE_JPEG_QUALITY), quality]
+        success, buffer = cv2.imencode(".jpg", image, encode_params)
+        if not success:
+            raise ValueError("Failed to encode image to JPEG format via OpenCV")
+        return base64.b64encode(buffer).decode("utf-8")
+    elif HAS_PIL:
+        rgb_arr = image[:, :, ::-1]
+        pil_img = Image.fromarray(rgb_arr)
+        buffer = io.BytesIO()
+        pil_img.save(buffer, format="JPEG", quality=quality)
+        return base64.b64encode(buffer.getvalue()).decode("utf-8")
+    else:
+        raise RuntimeError("Neither OpenCV nor Pillow is available for image encoding")
+
+
+def encode_image_to_data_uri(image: np.ndarray, quality: int = 85) -> str:
+    """Encodes an OpenCV BGR image into a full RFC 2397 Data URI (data:image/jpeg;base64,...)."""
+    b64_str = encode_image_to_base64(image, quality=quality)
+    return f"data:image/jpeg;base64,{b64_str}"
+
+
+def normalize_box(box: List[float], width: int, height: int) -> List[float]:
+    """Converts pixel coordinates [x1, y1, x2, y2] to normalized [0.0, 1.0] range."""
+    if width <= 0 or height <= 0:
+        return [0.0, 0.0, 0.0, 0.0]
+    return [
+        round(max(0.0, min(1.0, box[0] / width)), 4),
+        round(max(0.0, min(1.0, box[1] / height)), 4),
+        round(max(0.0, min(1.0, box[2] / width)), 4),
+        round(max(0.0, min(1.0, box[3] / height)), 4),
+    ]
+
+
+def calculate_iou(box_a: List[float], box_b: List[float]) -> float:
+    """Computes Intersection over Union (IoU) between two bounding boxes [x1, y1, x2, y2]."""
+    x_left = max(box_a[0], box_b[0])
+    y_top = max(box_a[1], box_b[1])
+    x_right = min(box_a[2], box_b[2])
+    y_bottom = min(box_a[3], box_b[3])
+
+    if x_right < x_left or y_bottom < y_top:
+        return 0.0
+
+    intersection_area = (x_right - x_left) * (y_bottom - y_top)
+    box_a_area = (box_a[2] - box_a[0]) * (box_a[3] - box_a[1])
+    box_b_area = (box_b[2] - box_b[0]) * (box_b[3] - box_b[1])
+
+    union_area = box_a_area + box_b_area - intersection_area
+    if union_area <= 0.0:
+        return 0.0
+
+    return intersection_area / union_area
+
+
+def is_box_inside_zone(
+    detection_box: List[float],
+    restricted_zone: List[float],
+    penetration_threshold: float = 0.10,
+) -> Tuple[bool, float]:
+    """
+    Determines if a detection bounding box penetrates or overlaps a restricted zone.
+    Both boxes are expected in normalized [0.0, 1.0] coordinates [x1, y1, x2, y2].
+    
+    Returns:
+        Tuple of (is_penetrated: bool, penetration_ratio: float)
+    """
+    x_left = max(detection_box[0], restricted_zone[0])
+    y_top = max(detection_box[1], restricted_zone[1])
+    x_right = min(detection_box[2], restricted_zone[2])
+    y_bottom = min(detection_box[3], restricted_zone[3])
+
+    if x_right < x_left or y_bottom < y_top:
+        return False, 0.0
+
+    intersection_area = (x_right - x_left) * (y_bottom - y_top)
+    detection_area = (detection_box[2] - detection_box[0]) * (
+        detection_box[3] - detection_box[1]
+    )
+
+    if detection_area <= 0.0:
+        return False, 0.0
+
+    penetration_ratio = intersection_area / detection_area
+    return penetration_ratio >= penetration_threshold, penetration_ratio
+
+
+def draw_forensic_annotations(
+    image: np.ndarray,
+    detections: List[Dict[str, Any]],
+    restricted_zone: Optional[List[float]],
+    incident_id: str,
+    timestamp_utc: str,
+    anomaly_summary: str,
+) -> np.ndarray:
+    """
+    Renders high-fidelity forensic visual annotations onto an OpenCV BGR image:
+    - Glowing red bounding boxes and tactical corner brackets for violator objects.
+    - Neon emerald bounding boxes for non-violator objects.
+    - Monitored restricted zone boundary with warning indicator.
+    - Top tactical forensic banner with incident ID, timestamp, and summary.
+    """
+    annotated = image.copy()
+    h, w = annotated.shape[:2]
+
+    # 1. Draw Restricted Zone if defined
+    if restricted_zone and len(restricted_zone) == 4:
+        zx1, zy1, zx2, zy2 = restricted_zone
+        px1, py1 = int(zx1 * w), int(zy1 * h)
+        px2, py2 = int(zx2 * w), int(zy2 * h)
+
+        if HAS_CV2:
+            overlay = annotated.copy()
+            cv2.rectangle(overlay, (px1, py1), (px2, py2), (50, 50, 239), -1)
+            cv2.addWeighted(overlay, 0.12, annotated, 0.88, 0, annotated)
+            cv2.rectangle(annotated, (px1, py1), (px2, py2), (50, 50, 239), 2, cv2.LINE_AA)
+            cv2.putText(
+                annotated,
+                "RESTRICTED ZONE (MONITORED ROI)",
+                (px1 + 8, py1 + 20),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.5,
+                (50, 50, 239),
+                1,
+                cv2.LINE_AA,
+            )
+
+    # 2. Draw Detections
+    for det in detections:
+        is_violator = det.get("is_violator", False)
+        box_px = det.get("box_pixels", [])
+        if len(box_px) != 4:
+            continue
+
+        x1, y1, x2, y2 = box_px
+        label = det.get("class", "object")
+        conf = det.get("confidence", 0.0)
+
+        box_color = (50, 50, 239) if is_violator else (129, 185, 16)
+        label_bg = (30, 30, 200) if is_violator else (16, 140, 10)
+
+        if HAS_CV2:
+            cv2.rectangle(annotated, (x1, y1), (x2, y2), box_color, 2, cv2.LINE_AA)
+
+            corner_len = min(16, max(4, int((x2 - x1) / 5)), max(4, int((y2 - y1) / 5)))
+            thick = 3
+            cv2.line(annotated, (x1, y1), (x1 + corner_len, y1), box_color, thick)
+            cv2.line(annotated, (x1, y1), (x1, y1 + corner_len), box_color, thick)
+            cv2.line(annotated, (x2, y1), (x2 - corner_len, y1), box_color, thick)
+            cv2.line(annotated, (x2, y1), (x2, y1 + corner_len), box_color, thick)
+            cv2.line(annotated, (x1, y2), (x1 + corner_len, y2), box_color, thick)
+            cv2.line(annotated, (x1, y2), (x1, y2 - corner_len), box_color, thick)
+            cv2.line(annotated, (x2, y2), (x2 - corner_len, y2), box_color, thick)
+            cv2.line(annotated, (x2, y2), (x2, y2 - corner_len), box_color, thick)
+
+            tag = f"{'[VIOLATION] ' if is_violator else ''}{label.upper()} {int(conf * 100)}%"
+            (tw, th), _ = cv2.getTextSize(tag, cv2.FONT_HERSHEY_SIMPLEX, 0.45, 1)
+            pill_y1 = max(th + 8, y1 - 4)
+            cv2.rectangle(annotated, (x1, pill_y1 - th - 6), (x1 + tw + 10, pill_y1 + 2), label_bg, -1)
+            cv2.putText(
+                annotated,
+                tag,
+                (x1 + 5, pill_y1 - 2),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.45,
+                (255, 255, 255),
+                1,
+                cv2.LINE_AA,
+            )
+
+    # 3. Draw Tactical Forensic Header & Footer Watermarks
+    if HAS_CV2:
+        header_h = 34
+        overlay = annotated.copy()
+        cv2.rectangle(overlay, (0, 0), (w, header_h), (0, 0, 0), -1)
+        cv2.addWeighted(overlay, 0.8, annotated, 0.2, 0, annotated)
+
+        header_text = f"STREAMPULSE FORENSIC AUDIT | ID: {incident_id[:16]}... | {timestamp_utc}"
+        cv2.putText(annotated, header_text, (12, 22), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (16, 230, 140), 1, cv2.LINE_AA)
+
+        footer_h = 28
+        overlay = annotated.copy()
+        cv2.rectangle(overlay, (0, h - footer_h), (w, h), (0, 0, 0), -1)
+        cv2.addWeighted(overlay, 0.8, annotated, 0.2, 0, annotated)
+
+        summary_text = f"ANOMALY: {anomaly_summary}"[:110]
+        cv2.putText(annotated, summary_text, (12, h - 9), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (50, 50, 239), 1, cv2.LINE_AA)
+
+    return annotated
+
+
+def analyze_audio_chunk(
+    audio_data: Union[str, bytes],
+    sample_rate: int = 16000,
+    spike_threshold: float = 0.05,
+    zcr_threshold: float = 0.10,
+) -> AudioAnalysisResult:
+    """Helper function for standalone audio DSP analysis."""
+    analyzer = AudioDSPAnalyzer()
+    return analyzer.process_chunk(audio_data, sample_rate=sample_rate)
+
+
+def calculate_latency_metrics(
+    t_client: float,
+    t_ingest: float,
+    t_worker_start: float,
+    t_worker_done: float,
+    t_broadcast: float,
+    sla_target_ms: float = 300.0,
+) -> LatencyTelemetry:
+    """Computes precise high-resolution latency deltas for all stages of the pipeline."""
+    ingestion_latency_ms = max(0.0, (t_ingest - t_client) * 1000.0)
+    queue_dwell_time_ms = max(0.0, (t_worker_start - t_ingest) * 1000.0)
+    inference_time_ms = max(0.0, (t_worker_done - t_worker_start) * 1000.0)
+    e2e_latency_ms = max(0.0, (t_broadcast - t_client) * 1000.0)
+
+    sla_met = e2e_latency_ms <= sla_target_ms
+
+    return LatencyTelemetry(
+        t_client=round(t_client, 4),
+        t_ingest=round(t_ingest, 4),
+        t_worker_start=round(t_worker_start, 4),
+        t_worker_done=round(t_worker_done, 4),
+        t_broadcast=round(t_broadcast, 4),
+        ingestion_latency_ms=round(ingestion_latency_ms, 2),
+        queue_dwell_time_ms=round(queue_dwell_time_ms, 2),
+        inference_time_ms=round(inference_time_ms, 2),
+        e2e_latency_ms=round(e2e_latency_ms, 2),
+        sla_met=sla_met,
+    )
