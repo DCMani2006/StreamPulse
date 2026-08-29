@@ -632,8 +632,11 @@ export function useStreamPulse({
       // Capture frame from active <video> element
       const video = videoRef.current;
       const canvas = offscreenCanvasRef.current;
+      const hasValidVideo =
+        video &&
+        (video.readyState >= 2 || (video.videoWidth > 0 && video.videoHeight > 0));
 
-      if (video && video.readyState >= 2 && canvas) {
+      if (hasValidVideo && canvas) {
         const ctx = canvas.getContext('2d', { willReadFrequently: true });
         if (ctx) {
           try {
