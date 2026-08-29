@@ -383,6 +383,15 @@ export const VideoStage: React.FC<VideoStageProps> = ({
         {/* Tab 2: Video File Drag-and-Drop Upload */}
         {activeTab === 'upload' && (
           <div className="flex flex-col gap-2.5 pt-1">
+            {/* Hidden Single Persistent File Input */}
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="video/*,.mp4,.webm,.mov,.mkv,.avi"
+              onChange={handleFileSelect}
+              className="hidden"
+            />
+
             {uploadedFileName && streamSource === 'file' ? (
               <div className="bg-[#121520] border border-[#262f45] rounded-xl p-3 flex flex-wrap items-center justify-between gap-3">
                 <div className="flex items-center gap-2.5">
@@ -416,18 +425,11 @@ export const VideoStage: React.FC<VideoStageProps> = ({
                     <RefreshCw className="w-3.5 h-3.5" />
                     <span>Upload New Video</span>
                   </button>
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    accept="video/*,.mp4,.webm,.mov,.mkv,.avi"
-                    onChange={handleFileSelect}
-                    className="hidden"
-                  />
                 </div>
               </div>
             ) : (
-              <label
-                htmlFor="video-file-upload"
+              <div
+                onClick={() => fileInputRef.current?.click()}
                 onDragOver={(e) => {
                   e.preventDefault();
                   e.stopPropagation();
@@ -445,14 +447,6 @@ export const VideoStage: React.FC<VideoStageProps> = ({
                     : 'border-[#262f45] bg-[#121520] hover:border-emerald-500/50 hover:bg-[#151928]'
                 }`}
               >
-                <input
-                  id="video-file-upload"
-                  ref={fileInputRef}
-                  type="file"
-                  accept="video/*,.mp4,.webm,.mov,.mkv,.avi"
-                  onChange={handleFileSelect}
-                  className="sr-only"
-                />
                 <Upload className="w-8 h-8 text-emerald-400 mb-1" />
                 <p className="text-xs font-bold text-slate-200">
                   Drag & Drop your video file here, or <span className="text-emerald-400 underline">Browse Local Files</span>
@@ -460,7 +454,7 @@ export const VideoStage: React.FC<VideoStageProps> = ({
                 <span className="text-[10px] text-slate-500">
                   Supports MP4, WebM, QuickTime MOV, MKV up to 4K resolution.
                 </span>
-              </label>
+              </div>
             )}
           </div>
         )}

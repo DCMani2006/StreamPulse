@@ -273,6 +273,10 @@ export function useStreamPulse({
       video.onloadeddata = startPlayback;
       video.oncanplay = startPlayback;
       video.onloadedmetadata = startPlayback;
+      video.onended = () => {
+        video.currentTime = 0;
+        video.play().catch(console.warn);
+      };
 
       video.onerror = (err) => {
         console.error('Video decode error:', err);
