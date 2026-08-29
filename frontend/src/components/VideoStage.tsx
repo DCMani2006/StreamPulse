@@ -272,7 +272,7 @@ export const VideoStage: React.FC<VideoStageProps> = ({
           {latestTelemetry?.alerts && latestTelemetry.alerts.length > 0 && (
             <div className="bg-red-600/90 backdrop-blur-md text-white border border-red-400 px-3 py-1 rounded-lg text-xs font-bold animate-pulse shadow-lg flex items-center gap-1.5">
               <AlertTriangle className="w-3.5 h-3.5" />
-              <span>ACTIVE ALERT</span>
+              <span>{latestTelemetry.alerts[0].message || '💥 ACTIVE CRASH ALERT'}</span>
             </div>
           )}
         </div>

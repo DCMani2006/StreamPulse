@@ -91,8 +91,8 @@ export const LiveVisionCanvas: React.FC<LiveVisionCanvasProps> = ({
                 const ioa = inter / Math.min(a1, a2);
 
                 const isPedStrike = isPersonA || isPersonB;
-                const iouThresh = isPedStrike ? 0.10 : 0.18;
-                const ioaThresh = isPedStrike ? 0.22 : 0.35;
+                const iouThresh = isPedStrike ? 0.10 : 0.12;
+                const ioaThresh = isPedStrike ? 0.22 : 0.25;
                 if (iou >= iouThresh || ioa >= ioaThresh) {
                   collidingIndices.add(i);
                   collidingIndices.add(j);
@@ -177,11 +177,10 @@ export const LiveVisionCanvas: React.FC<LiveVisionCanvasProps> = ({
           const boxH = Math.max(10, (ny2 - ny1) * h);
 
           const isProhibited = [
-            'cell phone',
-            'laptop',
             'knife',
             'scissors',
-            'backpack',
+            'gun',
+            'weapon',
           ].includes(det.label.toLowerCase());
 
           const isColliding = collidingIndices.has(idx);

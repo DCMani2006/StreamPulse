@@ -338,7 +338,7 @@ class MLInferenceWorker:
                     iou = calculate_iou(det_a.normalized_box, det_b.normalized_box)
                     ioa = calculate_ioa(det_a.normalized_box, det_b.normalized_box)
 
-                    if iou >= crash_iou_thresh or ioa >= 0.35:
+                    if iou >= 0.12 or ioa >= 0.25:
                         global_violated = True
                         global_rule = "VEHICLE_COLLISION"
                         global_observed = round(float(iou), 3)
