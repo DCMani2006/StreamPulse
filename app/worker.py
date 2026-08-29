@@ -385,7 +385,7 @@ class MLInferenceWorker:
                         )
 
         # E. Pedestrian-Vehicle Strike / Hazard Detection
-        if getattr(config, "enable_pedestrian_strike_rule", True):
+        if getattr(config, "enable_pedestrian_strike_rule", False):
             num_dets = len(detections)
             for i in range(num_dets):
                 det_a = detections[i]
@@ -597,24 +597,27 @@ class MLInferenceWorker:
                 f"NORMAL: Audio ({obs_rms:.2f} RMS) within dynamic baseline ({base_rms:.2f} ± {ambient_std:.2f} RMS). {subj_desc}"
             )
 
+        existing_types = {a.alert_type for a in alerts}
         for rule in triggered_rules:
-            sev = "critical" if rule.rule_id in ("RULE_RESTRICTED_ZONE", "RULE_PROHIBITED_OBJECT") else "warning"
-            alerts.append(
-                AlertTrigger(
-                    alert_type=rule.rule_id.lower(),
-                    severity=sev,
-                    message=rule.description,
-                    stream_id=stream_id,
-                    sequence_id=sequence_id,
-                    timestamp=now,
-                    details={
-                        "rule_id": rule.rule_id,
-                        "target_class": rule.target_class,
-                        "confidence": rule.confidence,
-                        "trigger_type": trigger_type,
-                    },
+            rule_type = rule.rule_id.lower()
+            if rule_type not in existing_types and "collision" not in rule_type and "strike" not in rule_type:
+                sev = "critical" if rule.rule_id in ("RULE_PROHIBITED_OBJECT", "RULE_VEHICLE_COLLISION", "RULE_PEDESTRIAN_VEHICLE_STRIKE") else "warning"
+                alerts.append(
+                    AlertTrigger(
+                        alert_type=rule_type,
+                        severity=sev,
+                        message=rule.description,
+                        stream_id=stream_id,
+                        sequence_id=sequence_id,
+                        timestamp=now,
+                        details={
+                            "rule_id": rule.rule_id,
+                            "target_class": rule.target_class,
+                            "confidence": rule.confidence,
+                            "trigger_type": trigger_type,
+                        },
+                    )
                 )
-            )
 
         return decision_basis, overall_rationale, triggered_rules, detection_details, alerts
 

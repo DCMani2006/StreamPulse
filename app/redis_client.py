@@ -221,14 +221,17 @@ class InMemoryPipelineBroker:
             return self.alert_configs[stream_id]
         return AlertRuleConfig(
             stream_id=stream_id,
-            max_persons=1,
-            prohibited_classes=["cell phone", "knife", "laptop", "scissors", "backpack", "book"],
-            prohibited_confidence_threshold=0.50,
-            velocity_spike_threshold=0.18,
-            enable_zone_rule=True,
-            enable_occupancy_rule=True,
-            enable_prohibited_rule=True,
+            max_persons=10,
+            prohibited_classes=["knife", "scissors", "gun", "weapon"],
+            prohibited_confidence_threshold=0.60,
+            velocity_spike_threshold=0.30,
+            enable_zone_rule=False,
+            enable_occupancy_rule=False,
+            enable_prohibited_rule=False,
             enable_audio_rule=True,
+            enable_crash_rule=True,
+            enable_pedestrian_strike_rule=False,
+            crash_iou_threshold=0.18,
         )
 
     async def update_worker_heartbeat(self, worker_id: str, processed_count: int, avg_inference_ms: float) -> None:
