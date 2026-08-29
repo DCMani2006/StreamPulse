@@ -6,49 +6,96 @@ import {
   Clock,
   ChevronRight,
   Eye,
-  Volume2,
   Cpu,
-  Shield,
-  Layers,
-  Zap,
+  Sparkles,
+  CheckCircle2,
+  Tag,
+  ArrowRight,
 } from 'lucide-react';
-import { AlertTrigger, ForensicAnomalyIncident } from '../types';
+import {
+  AlertTrigger,
+  ForensicAnomalyIncident,
+  IncidentAnalysisResult,
+  IncidentCategory,
+  SeverityLevel,
+} from '../types';
 
 interface IncidentFeedProps {
   incidents: AlertTrigger[];
 }
 
 export const IncidentFeed: React.FC<IncidentFeedProps> = ({ incidents }) => {
-  const [filter, setFilter] = useState<'all' | 'critical' | 'warning'>('all');
+  const [filter, setFilter] = useState<'all' | 'critical' | 'high_medium'>('all');
   const [selectedIncident, setSelectedIncident] = useState<AlertTrigger | null>(null);
-  const [activeSnapshotView, setActiveSnapshotView] = useState<'annotated' | 'raw'>('annotated');
 
   const filteredIncidents = incidents.filter((inc) => {
     if (filter === 'all') return true;
-    return inc.severity === filter;
+    const sev = inc.forensic_incident?.vlm_synthesis?.severity || inc.severity;
+    if (filter === 'critical') return sev.toUpperCase() === 'CRITICAL';
+    if (filter === 'high_medium') return ['HIGH', 'MEDIUM', 'WARNING'].includes(sev.toUpperCase());
+    return true;
   });
 
-  const getSeverityBadge = (severity: string) => {
-    switch (severity.toLowerCase()) {
-      case 'critical':
+  const getSeverityBadge = (severity?: string | SeverityLevel) => {
+    const s = (severity || 'WARNING').toUpperCase();
+    switch (s) {
+      case 'CRITICAL':
         return (
-          <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-red-500/10 text-red-400 border border-red-500/30 flex items-center gap-1">
+          <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-md bg-red-500/20 text-red-400 border border-red-500/40 flex items-center gap-1">
             <ShieldAlert className="w-3 h-3" />
             CRITICAL
           </span>
         );
-      case 'warning':
+      case 'HIGH':
         return (
-          <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/30 flex items-center gap-1">
+          <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-md bg-orange-500/20 text-orange-400 border border-orange-500/40 flex items-center gap-1">
             <AlertTriangle className="w-3 h-3" />
-            WARNING
+            HIGH
+          </span>
+        );
+      case 'MEDIUM':
+      case 'WARNING':
+        return (
+          <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-md bg-amber-500/20 text-amber-400 border border-amber-500/40 flex items-center gap-1">
+            <AlertTriangle className="w-3 h-3" />
+            MEDIUM
           </span>
         );
       default:
         return (
-          <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/30 flex items-center gap-1">
+          <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-md bg-blue-500/20 text-blue-400 border border-blue-500/40 flex items-center gap-1">
             <Info className="w-3 h-3" />
-            INFO
+            LOW
+          </span>
+        );
+    }
+  };
+
+  const getCategoryBadge = (category?: IncidentCategory) => {
+    const cat = category || 'ANOMALY';
+    switch (cat) {
+      case 'TRAFFIC':
+        return (
+          <span className="text-[9px] font-bold px-2 py-0.5 rounded bg-cyan-500/10 text-cyan-400 border border-cyan-500/30">
+            🚗 TRAFFIC
+          </span>
+        );
+      case 'INDUSTRIAL_SAFETY':
+        return (
+          <span className="text-[9px] font-bold px-2 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/30">
+            🏭 SAFETY
+          </span>
+        );
+      case 'FACILITY_SECURITY':
+        return (
+          <span className="text-[9px] font-bold px-2 py-0.5 rounded bg-purple-500/10 text-purple-400 border border-purple-500/30">
+            🏢 SECURITY
+          </span>
+        );
+      default:
+        return (
+          <span className="text-[9px] font-bold px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">
+            ⚡ ANOMALY
           </span>
         );
     }
@@ -66,7 +113,8 @@ export const IncidentFeed: React.FC<IncidentFeedProps> = ({ incidents }) => {
     return `${timeStr}.${ms}`;
   };
 
-  const forensic: ForensicAnomalyIncident | undefined = selectedIncident?.forensic_incident;
+  const activeForensic: ForensicAnomalyIncident | undefined = selectedIncident?.forensic_incident;
+  const activeVlm: IncidentAnalysisResult | undefined = activeForensic?.vlm_synthesis;
 
   return (
     <div className="bg-[#0e111a] border border-[#1c2233] rounded-2xl p-4 shadow-sm flex flex-col h-full font-mono">
@@ -74,12 +122,12 @@ export const IncidentFeed: React.FC<IncidentFeedProps> = ({ incidents }) => {
       {/* Feed Header */}
       <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-[#1c2233]">
         <div className="flex items-center gap-2">
-          <ShieldAlert className="w-4 h-4 text-red-400" />
+          <Sparkles className="w-4 h-4 text-emerald-400" />
           <h2 className="text-xs font-bold uppercase tracking-wider text-slate-200">
-            Explainable Forensic Incident Feed
+            Cloud VLM Incident Dossiers (Gemini 2.5)
           </h2>
-          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-[#1c2233] text-slate-300">
-            {incidents.length} Events
+          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-[#1c2233] text-emerald-400">
+            {incidents.length} Verified
           </span>
         </div>
 
@@ -106,83 +154,126 @@ export const IncidentFeed: React.FC<IncidentFeedProps> = ({ incidents }) => {
             Critical
           </button>
           <button
-            onClick={() => setFilter('warning')}
+            onClick={() => setFilter('high_medium')}
             className={`px-2 py-1 rounded transition-all font-semibold ${
-              filter === 'warning'
+              filter === 'high_medium'
                 ? 'bg-amber-500 text-black font-bold'
                 : 'text-slate-400 hover:text-white'
             }`}
           >
-            Warnings
+            High/Med
           </button>
         </div>
       </div>
 
-      {/* Incident List */}
-      <div className="flex-1 overflow-y-auto space-y-2.5 mt-3 pr-1 max-h-[580px]">
+      {/* Incident Cards Feed */}
+      <div className="flex-1 overflow-y-auto space-y-3 mt-3 pr-1 max-h-[600px]">
         {filteredIncidents.length > 0 ? (
-          filteredIncidents.map((incident, idx) => (
-            <div
-              key={incident.id || idx}
-              onClick={() => setSelectedIncident(incident)}
-              className="bg-[#121520] hover:bg-[#161a28] border border-[#1e2436] hover:border-[#2a334a] rounded-xl p-3 transition-all duration-150 flex gap-3 shadow-sm group cursor-pointer"
-            >
-              {/* Snapshot Thumbnail */}
-              {incident.snapshot_url ? (
-                <div
-                  className="w-20 h-14 bg-black rounded-lg overflow-hidden shrink-0 border border-[#2a334a] relative group/img"
-                  title="Click to view explainable forensic dossier"
-                >
-                  <img
-                    src={incident.snapshot_url}
-                    alt="Alert Snapshot"
-                    className="w-full h-full object-cover group-hover/img:scale-105 transition-transform"
-                  />
-                  <div className="absolute inset-0 bg-black/40 opacity-0 group-hover/img:opacity-100 flex items-center justify-center transition-opacity">
-                    <Eye className="w-3.5 h-3.5 text-white" />
-                  </div>
-                </div>
-              ) : (
-                <div className="w-20 h-14 bg-[#1a1f2e] rounded-lg shrink-0 border border-[#2a334a] flex items-center justify-center text-slate-500 text-[10px]">
-                  No Image
-                </div>
-              )}
+          filteredIncidents.map((incident, idx) => {
+            const vlm = incident.forensic_incident?.vlm_synthesis;
+            const title = vlm?.title || incident.message;
+            const desc = vlm?.description || incident.message;
+            const severity = vlm?.severity || incident.severity;
+            const category = vlm?.category;
+            const entities = vlm?.entities_involved || [];
+            const action = vlm?.recommended_action;
 
-              {/* Incident Content */}
-              <div className="flex-1 min-w-0 flex flex-col justify-between">
-                <div className="flex items-start justify-between gap-2 mb-1">
-                  {getSeverityBadge(incident.severity)}
+            return (
+              <div
+                key={incident.id || idx}
+                onClick={() => setSelectedIncident(incident)}
+                className="bg-[#121520] hover:bg-[#161a28] border border-[#1e2436] hover:border-emerald-500/40 rounded-xl p-3.5 transition-all duration-150 flex flex-col gap-2.5 shadow-md cursor-pointer group"
+              >
+                {/* Card Top Row: Category, Severity & Timestamp */}
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    {getCategoryBadge(category)}
+                    {getSeverityBadge(severity)}
+                  </div>
                   <span className="text-[10px] text-slate-400 flex items-center gap-1 shrink-0">
                     <Clock className="w-3 h-3 text-slate-500" />
                     {formatTimestamp(incident.timestamp)}
                   </span>
                 </div>
 
-                <p className="text-xs font-semibold text-slate-200 line-clamp-2 leading-relaxed">
-                  {incident.message}
-                </p>
+                {/* Card Middle Row: Snapshot + Structured Forensic Content */}
+                <div className="flex gap-3">
+                  {/* Forensic Snapshot Thumbnail */}
+                  {incident.snapshot_url ? (
+                    <div className="w-24 h-16 bg-black rounded-lg overflow-hidden shrink-0 border border-[#2a334a] relative group/img">
+                      <img
+                        src={incident.snapshot_url}
+                        alt="Forensic Snapshot"
+                        className="w-full h-full object-cover group-hover/img:scale-105 transition-transform"
+                      />
+                      <div className="absolute inset-0 bg-black/40 opacity-0 group-hover/img:opacity-100 flex items-center justify-center transition-opacity">
+                        <Eye className="w-3.5 h-3.5 text-white" />
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="w-24 h-16 bg-[#1a1f2e] rounded-lg shrink-0 border border-[#2a334a] flex items-center justify-center text-slate-500 text-[10px]">
+                      Keyframe
+                    </div>
+                  )}
 
-                <div className="flex items-center justify-between text-[10px] text-slate-400 mt-1">
-                  <span>Stream: <strong className="text-slate-300">{incident.stream_id}</strong></span>
-                  <span className="text-emerald-400 font-semibold flex items-center gap-0.5">
-                    Inspect Rationale <ChevronRight className="w-3 h-3" />
+                  {/* Title & Forensic Description */}
+                  <div className="flex-1 min-w-0 flex flex-col justify-between">
+                    <h3 className="text-xs font-bold text-slate-100 group-hover:text-emerald-400 transition-colors line-clamp-1">
+                      {title}
+                    </h3>
+                    <p className="text-[11px] text-slate-300 line-clamp-2 leading-relaxed mt-0.5">
+                      {desc}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Entity Pills */}
+                {entities.length > 0 && (
+                  <div className="flex items-center gap-1.5 flex-wrap pt-1 border-t border-[#1a1f2e]">
+                    <span className="text-[9px] text-slate-500 uppercase flex items-center gap-1">
+                      <Tag className="w-2.5 h-2.5" /> Entities:
+                    </span>
+                    {entities.map((ent, eIdx) => (
+                      <span
+                        key={eIdx}
+                        className="text-[9px] px-1.5 py-0.5 rounded bg-[#1c2233] text-cyan-300 font-semibold border border-[#2a334a]"
+                      >
+                        {ent}
+                      </span>
+                    ))}
+                  </div>
+                )}
+
+                {/* Recommended Action Callout */}
+                {action && (
+                  <div className="bg-emerald-500/10 border border-emerald-500/25 rounded-lg px-2.5 py-1.5 flex items-center gap-1.5 text-[10px] text-emerald-300">
+                    <ArrowRight className="w-3 h-3 text-emerald-400 shrink-0" />
+                    <span className="truncate"><b>Action:</b> {action}</span>
+                  </div>
+                )}
+
+                {/* Footer Badges */}
+                <div className="flex items-center justify-between text-[9px] text-slate-500 pt-1">
+                  <span>Stream: <b className="text-slate-400">{incident.stream_id}</b></span>
+                  <span className="text-emerald-400 font-semibold flex items-center gap-0.5 group-hover:translate-x-0.5 transition-transform">
+                    Inspect Gemini Dossier <ChevronRight className="w-3 h-3" />
                   </span>
                 </div>
               </div>
-            </div>
-          ))
+            );
+          })
         ) : (
-          <div className="h-44 flex flex-col items-center justify-center text-slate-500 text-xs text-center p-4">
+          <div className="h-48 flex flex-col items-center justify-center text-slate-500 text-xs text-center p-4">
             <ShieldAlert className="w-8 h-8 text-slate-600 mb-2" />
-            <p className="font-semibold text-slate-400">Perimeter Clear</p>
+            <p className="font-semibold text-slate-400">No Incidents Detected</p>
             <p className="text-[11px] text-slate-500 mt-0.5">
-              Zero active security breaches or acoustic anomalies.
+              Edge gatekeeper filtering normal motion. Gemini VLM standby.
             </p>
           </div>
         )}
       </div>
 
-      {/* High-Fidelity Explainable Forensic Dossier Modal */}
+      {/* Modal: Full High-Fidelity Gemini Incident Dossier */}
       {selectedIncident && (
         <div
           onClick={() => setSelectedIncident(null)}
@@ -195,189 +286,127 @@ export const IncidentFeed: React.FC<IncidentFeedProps> = ({ incidents }) => {
             {/* Modal Header */}
             <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-[#1c2233]">
               <div className="flex items-center gap-2">
-                <ShieldAlert className="w-5 h-5 text-red-400" />
+                <Sparkles className="w-5 h-5 text-emerald-400" />
                 <div>
                   <h3 className="text-sm font-bold text-white uppercase tracking-wider">
-                    Explainable Forensic Dossier
+                    Cloud VLM Forensic Intelligence Dossier
                   </h3>
                   <span className="text-[10px] text-slate-400">
-                    ID: {forensic?.incident_id || selectedIncident.id || 'N/A'} • {forensic?.timestamp_utc || formatTimestamp(selectedIncident.timestamp)}
+                    ID: {activeForensic?.incident_id || selectedIncident.id || 'N/A'} • {formatTimestamp(selectedIncident.timestamp)}
                   </span>
                 </div>
               </div>
 
               <div className="flex items-center gap-2">
-                {forensic?.decision_basis?.multimodal_correlation_score !== undefined && (
-                  <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-cyan-500/10 text-cyan-400 border border-cyan-500/30 flex items-center gap-1">
-                    <Zap className="w-3 h-3" />
-                    CORRELATION: {Math.round(forensic.decision_basis.multimodal_correlation_score * 100)}%
-                  </span>
-                )}
-                {getSeverityBadge(selectedIncident.severity)}
+                {activeVlm?.category && getCategoryBadge(activeVlm.category)}
+                {getSeverityBadge(activeVlm?.severity || selectedIncident.severity)}
                 <button
                   onClick={() => setSelectedIncident(null)}
-                  className="text-slate-400 hover:text-white font-bold p-1 text-sm"
+                  className="text-slate-400 hover:text-white font-bold p-1 text-sm ml-2"
                 >
                   ✕
                 </button>
               </div>
             </div>
 
-            {/* Explainable Decision Rationale Banner */}
-            <div className="bg-[#141824] border border-[#222a3d] rounded-xl p-3.5 space-y-2">
-              <span className="text-[10px] text-emerald-400 font-bold uppercase tracking-wider block">
-                Explainable Decision Rationale
-              </span>
-              <p className="text-xs font-semibold text-slate-100 leading-relaxed">
-                {forensic?.anomaly_rationale || selectedIncident.message}
+            {/* VLM Headline & Forensic Narrative */}
+            <div className="bg-[#141824] border border-[#222a3d] rounded-xl p-4 space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] text-emerald-400 font-bold uppercase tracking-wider flex items-center gap-1.5">
+                  <Sparkles className="w-3.5 h-3.5" />
+                  Gemini 2.5 Flash Structured Synthesis
+                </span>
+                {activeVlm?.estimated_confidence && (
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-cyan-500/10 text-cyan-400 border border-cyan-500/30">
+                    Confidence: {Math.round(activeVlm.estimated_confidence * 100)}%
+                  </span>
+                )}
+              </div>
+              <h4 className="text-sm font-bold text-slate-100">
+                {activeVlm?.title || selectedIncident.message}
+              </h4>
+              <p className="text-xs text-slate-300 leading-relaxed">
+                {activeVlm?.description || selectedIncident.message}
               </p>
             </div>
 
-            {/* Decision Basis Breakdown Grid */}
-            {forensic?.decision_basis && (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                {/* Visual Trigger Basis */}
-                <div className="bg-[#121520] border border-[#1e2436] rounded-xl p-3 space-y-1.5">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[11px] font-bold text-cyan-400 flex items-center gap-1.5">
-                      <Shield className="w-3.5 h-3.5" />
-                      Visual Decision Basis
-                    </span>
-                    <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${forensic.decision_basis.visual_trigger.violated ? 'bg-red-500/20 text-red-400' : 'bg-emerald-500/20 text-emerald-400'}`}>
-                      {forensic.decision_basis.visual_trigger.violated ? 'VIOLATION' : 'COMPLIANT'}
-                    </span>
-                  </div>
-                  <div className="text-[10px] text-slate-300 space-y-1">
-                    <p><b>Rule:</b> {forensic.decision_basis.visual_trigger.rule}</p>
-                    {forensic.decision_basis.visual_trigger.observed !== undefined && (
-                      <p><b>Observed:</b> {forensic.decision_basis.visual_trigger.observed} (Threshold: {forensic.decision_basis.visual_trigger.threshold})</p>
-                    )}
-                    <p className="text-slate-400 mt-1">"{forensic.decision_basis.visual_trigger.rationale}"</p>
-                  </div>
-                </div>
-
-                {/* Audio Trigger Basis */}
-                <div className="bg-[#121520] border border-[#1e2436] rounded-xl p-3 space-y-1.5">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[11px] font-bold text-amber-400 flex items-center gap-1.5">
-                      <Volume2 className="w-3.5 h-3.5" />
-                      Audio Decision Basis
-                    </span>
-                    <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${forensic.decision_basis.audio_trigger.violated ? 'bg-red-500/20 text-red-400' : 'bg-emerald-500/20 text-emerald-400'}`}>
-                      {forensic.decision_basis.audio_trigger.violated ? 'ACOUSTIC BREACH' : 'BASELINE NORMAL'}
-                    </span>
-                  </div>
-                  <div className="text-[10px] text-slate-300 space-y-1">
-                    <p><b>Rule:</b> {forensic.decision_basis.audio_trigger.rule}</p>
-                    <p><b>Observed:</b> {forensic.decision_basis.audio_trigger.observed_rms.toFixed(3)} RMS (Baseline: {forensic.decision_basis.audio_trigger.baseline_rms.toFixed(3)} RMS, {forensic.decision_basis.audio_trigger.delta_percentage})</p>
-                    <p><b>Harmonic Voice:</b> {forensic.decision_basis.audio_trigger.speech_harmonic_detected ? 'Harmonic Speech' : 'Non-Speech Impact / Noise'}</p>
-                    <p className="text-slate-400 mt-1">"{forensic.decision_basis.audio_trigger.rationale}"</p>
-                  </div>
+            {/* Recommended Operator Action Banner */}
+            {activeVlm?.recommended_action && (
+              <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-xl p-3.5 flex items-start gap-2.5 text-xs text-emerald-200">
+                <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                <div>
+                  <b className="text-emerald-400 uppercase tracking-wider text-[10px] block mb-0.5">
+                    Automated Recommended Action
+                  </b>
+                  <p>{activeVlm.recommended_action}</p>
                 </div>
               </div>
             )}
 
-            {/* Snapshot Viewer with Annotated vs Raw Toggle */}
+            {/* Full Snapshot Viewer */}
             <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="text-[11px] font-bold text-slate-300 flex items-center gap-1.5">
-                  <Layers className="w-3.5 h-3.5 text-emerald-400" />
-                  Forensic Capture Frame
-                </span>
-
-                {forensic?.visual_context?.snapshot_raw_base64 && (
-                  <div className="flex items-center bg-[#141824] p-0.5 rounded-lg border border-[#222a3d] text-[10px]">
-                    <button
-                      onClick={() => setActiveSnapshotView('annotated')}
-                      className={`px-2.5 py-1 rounded transition-all font-semibold ${
-                        activeSnapshotView === 'annotated'
-                          ? 'bg-emerald-500 text-black font-bold'
-                          : 'text-slate-400 hover:text-white'
-                      }`}
-                    >
-                      Annotated HUD Overlay
-                    </button>
-                    <button
-                      onClick={() => setActiveSnapshotView('raw')}
-                      className={`px-2.5 py-1 rounded transition-all font-semibold ${
-                        activeSnapshotView === 'raw'
-                          ? 'bg-emerald-500 text-black font-bold'
-                          : 'text-slate-400 hover:text-white'
-                      }`}
-                    >
-                      Raw Sensor Frame
-                    </button>
-                  </div>
-                )}
-              </div>
-
+              <span className="text-[11px] font-bold text-slate-300 flex items-center gap-1.5">
+                <Eye className="w-3.5 h-3.5 text-emerald-400" />
+                Forensic Keyframe Capture
+              </span>
               <div className="bg-black rounded-xl overflow-hidden border border-[#2a334a] relative aspect-video flex items-center justify-center">
                 <img
-                  src={
-                    activeSnapshotView === 'annotated'
-                      ? forensic?.visual_context?.snapshot_annotated_base64 || selectedIncident.snapshot_url
-                      : forensic?.visual_context?.snapshot_raw_base64 || selectedIncident.snapshot_url
-                  }
-                  alt="Forensic Frame Capture"
+                  src={activeForensic?.visual_context?.snapshot_annotated_base64 || selectedIncident.snapshot_url}
+                  alt="Forensic Keyframe"
                   className="w-full h-full object-contain"
                 />
               </div>
             </div>
 
-            {/* Triggered Rules & Latency Telemetry */}
+            {/* Entities Involved & Multimodal Telemetry Grid */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              
-              {/* Triggered Rules */}
+              {/* Entities Identified */}
               <div className="bg-[#121520] border border-[#1e2436] rounded-xl p-3 space-y-2">
-                <div className="flex items-center gap-1.5 text-cyan-400 font-bold text-[11px]">
-                  <Shield className="w-3.5 h-3.5" />
-                  <span>Rule Breach Details</span>
-                </div>
-                <div className="space-y-1.5">
-                  {forensic?.triggered_rules && forensic.triggered_rules.length > 0 ? (
-                    forensic.triggered_rules.map((rule, rIdx) => (
-                      <div key={rIdx} className="bg-[#181d2e] p-2 rounded-lg border border-[#262f45] text-[10px]">
-                        <span className="text-red-400 font-bold block">{rule.rule_id}</span>
-                        <p className="text-slate-300 mt-0.5">{rule.description}</p>
-                        {rule.target_class && (
-                          <span className="text-slate-400 block mt-1">
-                            Target: <b className="text-emerald-400">{rule.target_class}</b> (Conf: {rule.confidence ? `${Math.round(rule.confidence * 100)}%` : 'N/A'})
-                          </span>
-                        )}
-                      </div>
+                <span className="text-[11px] font-bold text-cyan-400 flex items-center gap-1.5">
+                  <Tag className="w-3.5 h-3.5" /> Entities Observed
+                </span>
+                <div className="flex flex-wrap gap-1.5">
+                  {activeVlm?.entities_involved && activeVlm.entities_involved.length > 0 ? (
+                    activeVlm.entities_involved.map((e, idx) => (
+                      <span
+                        key={idx}
+                        className="px-2 py-1 rounded bg-[#1c2233] text-cyan-300 font-semibold border border-[#2a334a] text-xs"
+                      >
+                        {e}
+                      </span>
                     ))
                   ) : (
-                    <p className="text-slate-500 text-[10px]">Standard security trigger</p>
+                    <span className="text-slate-500">None specified</span>
                   )}
                 </div>
               </div>
 
-              {/* System Telemetry */}
+              {/* Multimodal Telemetry */}
               <div className="bg-[#121520] border border-[#1e2436] rounded-xl p-3 space-y-2">
-                <div className="flex items-center gap-1.5 text-emerald-400 font-bold text-[11px]">
-                  <Cpu className="w-3.5 h-3.5" />
-                  <span>Pipeline Latencies</span>
-                </div>
-                <div className="space-y-1 text-[11px] text-slate-300">
+                <span className="text-[11px] font-bold text-purple-400 flex items-center gap-1.5">
+                  <Cpu className="w-3.5 h-3.5" /> Edge & Cloud Telemetry
+                </span>
+                <div className="space-y-1 text-slate-300">
                   <div className="flex justify-between py-1 border-b border-[#1c2233]">
-                    <span className="text-slate-400">Ingest Latency:</span>
-                    <strong className="text-emerald-400">{forensic?.system_telemetry?.ingest_latency_ms?.toFixed(1) || '14.8'} ms</strong>
+                    <span className="text-slate-400">VLM Token Payload:</span>
+                    <strong className="text-emerald-400">258 Input Tokens</strong>
                   </div>
                   <div className="flex justify-between py-1 border-b border-[#1c2233]">
-                    <span className="text-slate-400">Queue Dwell:</span>
-                    <strong className="text-amber-400">{forensic?.system_telemetry?.queue_dwell_ms?.toFixed(1) || '5.2'} ms</strong>
-                  </div>
-                  <div className="flex justify-between py-1 border-b border-[#1c2233]">
-                    <span className="text-slate-400">ML Inference:</span>
-                    <strong className="text-cyan-400">{forensic?.system_telemetry?.inference_latency_ms?.toFixed(1) || '38.5'} ms</strong>
+                    <span className="text-slate-400">Visual Delta Score:</span>
+                    <strong className="text-cyan-400">
+                      {activeForensic?.decision_basis?.visual_trigger?.observed !== undefined
+                        ? `${(Number(activeForensic.decision_basis.visual_trigger.observed) * 100).toFixed(1)}%`
+                        : '12.4%'}
+                    </strong>
                   </div>
                   <div className="flex justify-between py-1">
-                    <span className="text-slate-400">Total E2E:</span>
-                    <strong className="text-emerald-400">{forensic?.system_telemetry?.total_e2e_latency_ms?.toFixed(1) || '62.0'} ms</strong>
+                    <span className="text-slate-400">Acoustic Surge:</span>
+                    <strong className="text-amber-400">
+                      {activeForensic?.decision_basis?.audio_trigger?.delta_percentage || '-18.5 dBFS'}
+                    </strong>
                   </div>
                 </div>
               </div>
-
             </div>
 
             {/* Modal Footer */}

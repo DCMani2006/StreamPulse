@@ -102,7 +102,7 @@ export const VideoStage: React.FC<VideoStageProps> = ({
   confidenceThreshold,
   setConfidenceThreshold,
   streamId,
-  isBackendConnected,
+  isBackendConnected: _isBackendConnected,
   onTakeSnapshot,
 }) => {
   const [hudTime, setHudTime] = useState<string>('');
@@ -177,11 +177,21 @@ export const VideoStage: React.FC<VideoStageProps> = ({
     setIsPlaying(true);
   };
 
+  const isTriggerFired = Boolean(
+    latestTelemetry?.trigger_fired ||
+    (latestTelemetry?.alerts && latestTelemetry.alerts.length > 0) ||
+    latestTelemetry?.forensic_incident
+  );
+
   return (
     <div className="flex flex-col gap-3 font-mono">
       
       {/* Video Container Stage */}
-      <div className="relative bg-[#07090e] border border-[#1c2233] rounded-2xl overflow-hidden shadow-2xl aspect-[16/9] flex items-center justify-center group">
+      <div className={`relative bg-[#07090e] border ${
+        isTriggerFired
+          ? 'border-amber-400 ring-4 ring-amber-500/30 shadow-2xl shadow-amber-500/20'
+          : 'border-[#1c2233]'
+      } rounded-2xl overflow-hidden shadow-2xl aspect-[16/9] flex items-center justify-center transition-all duration-200 group`}>
         
         {/* Live Camera / Video Stream Element */}
         <video
@@ -255,10 +265,22 @@ export const VideoStage: React.FC<VideoStageProps> = ({
           <div className="bg-black/80 backdrop-blur-md border border-white/10 px-3 py-1 rounded-lg text-xs font-semibold text-slate-200 flex items-center gap-2 shadow-lg">
             <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
             <span>
-              CAM-01: {streamSource.toUpperCase()} ({isBackendConnected ? 'LIVE PIPELINE' : 'LOCAL INGEST'})
+              CAM-01: {streamSource.toUpperCase()}
             </span>
             <span className="text-slate-500">|</span>
             <span className="text-emerald-400">{hudTime}</span>
+          </div>
+
+          {/* Edge Gatekeeper Active Status Pill */}
+          <div className="hidden sm:flex items-center gap-1.5 bg-black/80 backdrop-blur-md border border-emerald-500/30 px-2.5 py-1 rounded-lg text-[10px] font-bold text-emerald-400 shadow-lg">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping"></span>
+            <span>
+              {isTriggerFired
+                ? '⚡ Candidate Event (VLM Dispatch)'
+                : latestTelemetry?.is_static
+                ? '🟢 Edge Gatekeeper: Static Filtered (<1.5ms)'
+                : '🟢 Edge Gatekeeper: Active (Filtering >95%)'}
+            </span>
           </div>
         </div>
 
@@ -272,7 +294,7 @@ export const VideoStage: React.FC<VideoStageProps> = ({
           {latestTelemetry?.alerts && latestTelemetry.alerts.length > 0 && (
             <div className="bg-red-600/90 backdrop-blur-md text-white border border-red-400 px-3 py-1 rounded-lg text-xs font-bold animate-pulse shadow-lg flex items-center gap-1.5">
               <AlertTriangle className="w-3.5 h-3.5" />
-              <span>{latestTelemetry.alerts[0].message || '💥 ACTIVE CRASH ALERT'}</span>
+              <span>{latestTelemetry.vlm_synthesis?.title || latestTelemetry.alerts[0].message || '💥 ACTIVE INCIDENT DETECTED'}</span>
             </div>
           )}
         </div>

@@ -63,6 +63,7 @@ class CloudVLMDispatcher:
     def __init__(self):
         self.client = None
         self.last_dispatch_time: Dict[str, float] = {}
+        self.active_preset: str = "TRAFFIC"
 
         if HAS_GENAI and cloud_config.GEMINI_API_KEY:
             try:
@@ -72,6 +73,11 @@ class CloudVLMDispatcher:
                 logger.warning(f"Failed to initialize GenAI client: {e}")
         else:
             logger.info("Cloud VLM initialized in offline / heuristic synthesis mode.")
+
+    def set_preset(self, preset: str) -> None:
+        """Dynamically updates the surveillance domain context for Gemini VLM."""
+        self.active_preset = preset.upper()
+        logger.info(f"[VLM CONTEXT] Updated active surveillance domain preset to: {self.active_preset}")
 
     def _convert_image_to_jpeg_bytes(self, image: np.ndarray, max_dim: int = 640) -> Optional[bytes]:
         """Converts BGR numpy image to scaled JPEG bytes."""
@@ -120,11 +126,12 @@ class CloudVLMDispatcher:
                 prompt_text = (
                     f"Surveillance Event Telemetry Context:\n"
                     f"- Stream ID: {stream_id}\n"
+                    f"- Active Domain Sector: {self.active_preset}\n"
                     f"- Visual Motion Delta: {delta_score * 100.0:.1f}%\n"
                     f"- Acoustic Level: {audio_db:.1f} dBFS\n"
                     f"- Detected Objects: {', '.join(detected_classes) if detected_classes else 'None'}\n"
                     f"- Active Edge Triggers: {', '.join(active_triggers) if active_triggers else 'Visual Motion'}\n\n"
-                    f"Analyze the attached frame and synthesize structured incident intelligence."
+                    f"Analyze the attached frame and synthesize structured incident intelligence for the {self.active_preset} domain."
                 )
 
                 response = self.client.models.generate_content(

@@ -418,3 +418,20 @@ async def reset_telemetry_endpoint():
     telemetry_service.reset()
     return {"status": "ok", "message": "Telemetry & ROI counters reset successfully"}
 
+
+# -----------------------------------------------------------------------------
+# Domain Preset Context Switcher Endpoint
+# -----------------------------------------------------------------------------
+
+class PresetUpdateRequest(BaseModel):
+    preset: str = "TRAFFIC"
+
+
+@app.post("/api/v1/context/preset", tags=["VLM Context"])
+async def set_context_preset_endpoint(req: PresetUpdateRequest):
+    """Dynamically updates the surveillance domain context for Gemini 2.5 Flash."""
+    from app.vlm_dispatcher import vlm_dispatcher
+    vlm_dispatcher.set_preset(req.preset)
+    return {"status": "ok", "preset": req.preset.upper()}
+
+
