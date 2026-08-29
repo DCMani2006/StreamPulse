@@ -225,12 +225,27 @@ class ForensicAnomalyIncident(BaseModel):
     system_telemetry: SystemTelemetryDetail
 
 
+class TokenOptimizationStats(BaseModel):
+    """Running Token Optimization and Static Frame Dropping Metrics."""
+    total_frames: int = Field(0, description="Total video frames received at gateway")
+    frames_dropped: int = Field(0, description="Static / redundant frames dropped before AI inference")
+    candidate_events: int = Field(0, description="Candidate event frames captured for processing")
+    token_reduction_ratio: float = Field(0.0, description="Ratio of dropped frames vs total frames (e.g. 0.957)")
+    bandwidth_saving_percent: float = Field(0.0, description="Bandwidth and token cost saving percentage")
+
+
 class StreamTelemetryPayload(BaseModel):
-    """Complete inference and telemetry payload broadcasted via WebSocket to dashboards."""
+    """Complete inference, edge gatekeeper and telemetry payload broadcasted via WebSocket."""
     stream_id: str
     sequence_id: int
+    frame_id: Optional[int] = None
     timestamp: float
     worker_id: str
+    is_static: bool = False
+    delta_score: float = 0.0
+    audio_db: float = -60.0
+    trigger_fired: bool = False
+    stats: Optional[TokenOptimizationStats] = None
     detections: List[DetectionResult] = Field(default_factory=list)
     person_count: int = 0
     total_objects: int = 0
@@ -239,7 +254,7 @@ class StreamTelemetryPayload(BaseModel):
     forensic_incident: Optional[ForensicAnomalyIncident] = None
     decision_basis: Optional[DecisionBasis] = None
     stream_roi: Optional[StreamROIConfig] = None
-    anomaly_rationale: str = Field("NORMAL: Monitored sector and acoustics within baseline parameters.")
+    anomaly_rationale: str = Field("NORMAL: Monitored sector within baseline parameters.")
     latency: LatencyTelemetry
     frame_width: Optional[int] = None
     frame_height: Optional[int] = None

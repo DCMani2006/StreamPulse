@@ -143,11 +143,25 @@ export interface AlertTrigger {
   forensic_incident?: ForensicAnomalyIncident;
 }
 
+export interface TokenOptimizationStats {
+  total_frames: number;
+  frames_dropped: number;
+  candidate_events: number;
+  token_reduction_ratio: number;
+  bandwidth_saving_percent: number;
+}
+
 export interface StreamTelemetryPayload {
   stream_id: string;
   sequence_id: number;
+  frame_id?: number;
   timestamp: number;
   worker_id: string;
+  is_static?: boolean;
+  delta_score?: number;
+  audio_db?: number;
+  trigger_fired?: boolean;
+  stats?: TokenOptimizationStats;
   detections: DetectionResult[];
   person_count: number;
   total_objects: number;
