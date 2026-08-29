@@ -18,6 +18,10 @@ import psutil
 
 from app.config import settings
 from app.redis_client import redis_manager
+from app.services.telemetry_service import (
+    ROITelemetrySnapshot,
+    telemetry_service,
+)
 from app.schemas import (
     AlertRuleConfig,
     AlertTrigger,
@@ -41,12 +45,13 @@ APP_START_TIME = time.time()
 stream_sequence_counters: Dict[str, int] = {}
 embedded_worker_instance = None
 embedded_worker_task = None
+telemetry_broadcast_task = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Manages application lifecycle: connects broker and launches ML worker."""
-    global embedded_worker_instance, embedded_worker_task
+    """Manages application lifecycle: connects broker, launches ML worker, and starts telemetry broadcast."""
+    global embedded_worker_instance, embedded_worker_task, telemetry_broadcast_task
     logger.info("Initializing StreamPulse Gateway & Message Broker...")
     await redis_manager.connect()
     await redis_manager.ensure_consumer_group()
@@ -60,10 +65,25 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"Failed to start embedded ML worker: {e}")
 
+    # Launch 2 Hz (500ms) periodic ROI & Token Accounting Telemetry Broadcaster
+    async def periodic_telemetry_broadcaster():
+        try:
+            while True:
+                await asyncio.sleep(0.5)
+                packet = telemetry_service.get_telemetry_broadcast_packet()
+                await redis_manager.publish_telemetry("global", packet)
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.warning(f"Periodic telemetry broadcaster error: {e}")
+
+    telemetry_broadcast_task = asyncio.create_task(periodic_telemetry_broadcaster())
     logger.info("StreamPulse Gateway is ready for high-throughput media ingestion and ML broadcast.")
     yield
 
     logger.info("Shutting down StreamPulse Gateway...")
+    if telemetry_broadcast_task:
+        telemetry_broadcast_task.cancel()
     if embedded_worker_instance:
         embedded_worker_instance.stop()
     if embedded_worker_task:
@@ -380,3 +400,21 @@ async def get_alert_history_endpoint(
 ):
     incidents = await redis_manager.get_alert_history(stream_id=stream_id, limit=limit)
     return incidents
+
+
+# -----------------------------------------------------------------------------
+# Token Accounting & Cost-ROI Telemetry Endpoints
+# -----------------------------------------------------------------------------
+
+@app.get("/api/v1/telemetry/roi", response_model=ROITelemetrySnapshot, tags=["Telemetry"])
+async def get_roi_telemetry_endpoint():
+    """Retrieves real-time token accounting, bandwidth savings, and projected cost ROI."""
+    return telemetry_service.get_roi_telemetry()
+
+
+@app.post("/api/v1/telemetry/reset", tags=["Telemetry"])
+async def reset_telemetry_endpoint():
+    """Resets real-time token accounting counters."""
+    telemetry_service.reset()
+    return {"status": "ok", "message": "Telemetry & ROI counters reset successfully"}
+

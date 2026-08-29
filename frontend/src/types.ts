@@ -158,6 +158,32 @@ export interface AlertTrigger {
   forensic_incident?: ForensicAnomalyIncident;
 }
 
+export interface TokenStatsDetail {
+  tokens_consumed: number;
+  tokens_saved: number;
+  token_reduction_pct: number;
+}
+
+export interface CloudSavingsDetail {
+  bandwidth_saved_mb: number;
+  estimated_cost_saved_usd: number;
+  estimated_hourly_savings_usd: number;
+  projected_monthly_savings_usd: number;
+}
+
+export interface ROITelemetrySnapshot {
+  pipeline_fps: number;
+  edge_filter_latency_ms: number;
+  total_frames_processed: number;
+  static_frames_dropped: number;
+  filter_efficiency_pct: number;
+  candidate_triggers: number;
+  cloud_dispatches: number;
+  confirmed_incidents: number;
+  token_stats: TokenStatsDetail;
+  cloud_savings: CloudSavingsDetail;
+}
+
 export interface TokenOptimizationStats {
   total_frames: number;
   frames_dropped: number;
@@ -177,6 +203,7 @@ export interface StreamTelemetryPayload {
   audio_db?: number;
   trigger_fired?: boolean;
   stats?: TokenOptimizationStats;
+  roi_telemetry?: ROITelemetrySnapshot;
   detections: DetectionResult[];
   person_count: number;
   total_objects: number;

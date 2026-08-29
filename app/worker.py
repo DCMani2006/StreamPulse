@@ -25,6 +25,7 @@ from app.pipeline_utils import (
 from app.edge_gatekeeper import EdgeGatekeeper
 from app.audio_trigger import AudioTransientTrigger
 from app.vlm_dispatcher import vlm_dispatcher
+from app.services.telemetry_service import telemetry_service
 from app.redis_client import redis_manager
 from app.schemas import (
     AlertRuleConfig,
@@ -363,15 +364,24 @@ class MLInferenceWorker:
         gatekeeper = self.get_edge_gatekeeper(stream_id)
         raw_image = decode_base64_image(frame_base64) if frame_base64 else None
 
+        t_gatekeeper_start = time.time()
         is_static, delta_score, stats = gatekeeper.process_frame(
             raw_image,
             force_trigger=audio_trigger_fired,
         )
+        gatekeeper_latency_ms = (time.time() - t_gatekeeper_start) * 1000.0
         stats_obj = TokenOptimizationStats(**stats)
         current_fps = self.calculate_pipeline_fps()
 
         # FAST-PATH: Drop static / redundant surveillance frames (<1.5ms, >95% VLM token reduction)
         if is_static:
+            telemetry_service.record_frame_ingest(
+                is_static=True,
+                filter_latency_ms=gatekeeper_latency_ms,
+                is_candidate_trigger=False,
+            )
+            roi_telemetry = telemetry_service.get_roi_telemetry()
+
             t_worker_done = time.time()
             t_broadcast = time.time()
             latency = calculate_latency_metrics(
@@ -394,6 +404,7 @@ class MLInferenceWorker:
                 audio_db=audio_db,
                 trigger_fired=False,
                 stats=stats_obj,
+                roi_telemetry=roi_telemetry,
                 detections=[],
                 person_count=0,
                 total_objects=0,
@@ -409,6 +420,12 @@ class MLInferenceWorker:
             return
 
         # CANDIDATE EVENT PATH: Active visual motion or acoustic trigger
+        telemetry_service.record_frame_ingest(
+            is_static=False,
+            filter_latency_ms=gatekeeper_latency_ms,
+            is_candidate_trigger=True,
+        )
+
         detections, person_count, img_width, img_height = self.run_cv_inference(raw_image) if raw_image is not None else ([], 0, 0, 0)
         config = await self.get_cached_alert_config(stream_id)
         roi_config = await self.get_cached_roi_config(stream_id)
@@ -470,6 +487,11 @@ class MLInferenceWorker:
                     [d.label for d in detections],
                     [r.rule_id for r in triggered_rules],
                 )
+                if vlm_result:
+                    telemetry_service.record_cloud_dispatch(
+                        tokens_used=258,
+                        is_incident=vlm_result.is_incident,
+                    )
             except Exception as e:
                 logger.warning(f"VLM Dispatcher execution error: {e}")
 
@@ -545,6 +567,8 @@ class MLInferenceWorker:
             for alert in alerts:
                 alert.snapshot_url = snapshot_annotated_base64
 
+        roi_telemetry = telemetry_service.get_roi_telemetry()
+
         telemetry_payload = StreamTelemetryPayload(
             stream_id=stream_id,
             sequence_id=sequence_id,
@@ -556,6 +580,7 @@ class MLInferenceWorker:
             audio_db=audio_db,
             trigger_fired=audio_trigger_fired or len(alerts) > 0,
             stats=stats_obj,
+            roi_telemetry=roi_telemetry,
             detections=detections,
             person_count=person_count,
             total_objects=len(detections),

@@ -6,6 +6,11 @@ from app.incident_schema import (
     IncidentCategory,
     SeverityLevel,
 )
+from app.services.telemetry_service import (
+    CloudSavingsDetail,
+    ROITelemetrySnapshot,
+    TokenStatsDetail,
+)
 
 
 class FrameIngestPayload(BaseModel):
@@ -261,6 +266,7 @@ class StreamTelemetryPayload(BaseModel):
     forensic_incident: Optional[ForensicAnomalyIncident] = None
     decision_basis: Optional[DecisionBasis] = None
     vlm_synthesis: Optional[IncidentAnalysisResult] = None
+    roi_telemetry: Optional[ROITelemetrySnapshot] = None
     stream_roi: Optional[StreamROIConfig] = None
     anomaly_rationale: str = Field("NORMAL: Monitored sector within baseline parameters.")
     latency: LatencyTelemetry
