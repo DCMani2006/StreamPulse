@@ -226,38 +226,60 @@ export function useStreamPulse({
 
   // Load Video File from File Object (Drag & Drop or File Input)
   const loadVideoFile = useCallback((file: File) => {
+    if (!file) return;
     stopWebcam();
     setCameraError(null);
     setIsLoadingMedia(true);
 
     if (objectUrlToCleanupRef.current) {
       URL.revokeObjectURL(objectUrlToCleanupRef.current);
+      objectUrlToCleanupRef.current = null;
     }
 
     const objectUrl = URL.createObjectURL(file);
     objectUrlToCleanupRef.current = objectUrl;
+    setStreamSource('file');
 
     const video = videoRef.current;
     if (video) {
+      video.pause();
+      video.removeAttribute('crossorigin');
       video.srcObject = null;
-      video.src = objectUrl;
-      video.loop = true;
       video.muted = true;
+      video.defaultMuted = true;
+      video.loop = true;
       video.playsInline = true;
+      video.src = objectUrl;
+      video.load();
 
-      video.onloadeddata = () => {
-        video.play().catch(console.warn);
-        setCameraActive(true);
-        setIsLoadingMedia(false);
+      let isStarted = false;
+      const startPlayback = () => {
+        if (isStarted) return;
+        isStarted = true;
+        video
+          .play()
+          .then(() => {
+            setCameraActive(true);
+            setCameraError(null);
+            setIsLoadingMedia(false);
+          })
+          .catch((err) => {
+            console.warn('Video auto-play warning:', err);
+            setCameraActive(true);
+            setIsLoadingMedia(false);
+          });
       };
 
-      video.onerror = () => {
-        setCameraError(`Failed to decode video file: ${file.name}`);
+      video.onloadeddata = startPlayback;
+      video.oncanplay = startPlayback;
+      video.onloadedmetadata = startPlayback;
+
+      video.onerror = (err) => {
+        console.error('Video decode error:', err);
+        setCameraError(`Failed to decode video file "${file.name}". Please ensure it is a valid MP4, WebM, or MOV file.`);
         setCameraActive(false);
         setIsLoadingMedia(false);
       };
-
-      setStreamSource('file');
     }
   }, [stopWebcam]);
 

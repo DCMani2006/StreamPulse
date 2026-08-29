@@ -8,10 +8,13 @@ import {
   AlertTriangle,
   Camera,
   Play,
+  Pause,
   Film,
   CameraOff,
   CheckCircle,
   Loader2,
+  FileVideo,
+  RefreshCw,
 } from 'lucide-react';
 import { StreamTelemetryPayload, StreamSourceType, PresetScenario } from '../types';
 import { LiveVisionCanvas } from './LiveVisionCanvas';
@@ -109,6 +112,8 @@ export const VideoStage: React.FC<VideoStageProps> = ({
   const [urlInput, setUrlInput] = useState<string>('https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4');
   const [selectedPresetId, setSelectedPresetId] = useState<string>('campus');
   const [isDragOver, setIsDragOver] = useState<boolean>(false);
+  const [uploadedFileName, setUploadedFileName] = useState<string | null>(null);
+  const [isPlaying, setIsPlaying] = useState<boolean>(true);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   // Live HUD Millisecond Clock
@@ -129,18 +134,34 @@ export const VideoStage: React.FC<VideoStageProps> = ({
 
   const handleFileDrop = (e: React.DragEvent) => {
     e.preventDefault();
+    e.stopPropagation();
     setIsDragOver(false);
     if (e.dataTransfer.files && e.dataTransfer.files[0]) {
       const file = e.dataTransfer.files[0];
-      if (file.type.startsWith('video/') || file.name.match(/\.(mp4|webm|mov|mkv)$/i)) {
-        loadVideoFile(file);
-      }
+      setUploadedFileName(file.name);
+      loadVideoFile(file);
+      setIsPlaying(true);
     }
   };
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
-      loadVideoFile(e.target.files[0]);
+      const file = e.target.files[0];
+      setUploadedFileName(file.name);
+      loadVideoFile(file);
+      setIsPlaying(true);
+      e.target.value = '';
+    }
+  };
+
+  const togglePlayback = () => {
+    const video = videoRef.current;
+    if (!video) return;
+    if (video.paused) {
+      video.play().then(() => setIsPlaying(true)).catch(console.warn);
+    } else {
+      video.pause();
+      setIsPlaying(false);
     }
   };
 
@@ -148,12 +169,14 @@ export const VideoStage: React.FC<VideoStageProps> = ({
     e.preventDefault();
     if (urlInput && urlInput.trim()) {
       loadVideoUrl(urlInput.trim());
+      setIsPlaying(true);
     }
   };
 
   const handlePresetSelect = (preset: PresetScenario) => {
     setSelectedPresetId(preset.id);
     loadPresetScenario(preset.videoUrl);
+    setIsPlaying(true);
   };
 
   return (
@@ -181,11 +204,11 @@ export const VideoStage: React.FC<VideoStageProps> = ({
         )}
 
         {/* Camera Permission / Error Fallback Screen */}
-        {streamSource === 'webcam' && !cameraActive && !isLoadingMedia && (
+        {((streamSource === 'webcam' && !cameraActive && !isLoadingMedia) || cameraError) && (
           <div className="absolute inset-0 bg-[#090b12]/95 flex flex-col items-center justify-center p-6 text-center z-10">
             <CameraOff className="w-12 h-12 text-slate-500 mb-3" />
             <h3 className="text-base font-bold text-slate-200 font-mono">
-              Webcam Initialization
+              Stream Source Initialization
             </h3>
             <p className="text-xs text-slate-400 max-w-sm mt-1 mb-4 font-mono">
               {cameraError || 'Requesting browser camera access. Please allow camera permissions in your browser.'}
@@ -286,7 +309,7 @@ export const VideoStage: React.FC<VideoStageProps> = ({
               <button
                 onClick={() => setActiveTab('upload')}
                 className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md font-semibold transition-all ${
-                  activeTab === 'upload'
+                  streamSource === 'file' || activeTab === 'upload'
                     ? 'bg-emerald-500 text-black font-bold shadow-sm'
                     : 'text-slate-400 hover:text-white'
                 }`}
@@ -298,7 +321,7 @@ export const VideoStage: React.FC<VideoStageProps> = ({
               <button
                 onClick={() => setActiveTab('url')}
                 className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md font-semibold transition-all ${
-                  activeTab === 'url'
+                  streamSource === 'url' && activeTab === 'url'
                     ? 'bg-emerald-500 text-black font-bold shadow-sm'
                     : 'text-slate-400 hover:text-white'
                 }`}
@@ -310,7 +333,7 @@ export const VideoStage: React.FC<VideoStageProps> = ({
               <button
                 onClick={() => setActiveTab('presets')}
                 className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md font-semibold transition-all ${
-                  activeTab === 'presets'
+                  streamSource === 'preset' || activeTab === 'presets'
                     ? 'bg-emerald-500 text-black font-bold shadow-sm'
                     : 'text-slate-400 hover:text-white'
                 }`}
@@ -359,34 +382,86 @@ export const VideoStage: React.FC<VideoStageProps> = ({
 
         {/* Tab 2: Video File Drag-and-Drop Upload */}
         {activeTab === 'upload' && (
-          <div
-            onDragOver={(e) => {
-              e.preventDefault();
-              setIsDragOver(true);
-            }}
-            onDragLeave={() => setIsDragOver(false)}
-            onDrop={handleFileDrop}
-            onClick={() => fileInputRef.current?.click()}
-            className={`border-2 border-dashed rounded-xl p-6 flex flex-col items-center justify-center gap-2 cursor-pointer transition-all ${
-              isDragOver
-                ? 'border-emerald-400 bg-emerald-500/10'
-                : 'border-[#262f45] bg-[#121520] hover:border-emerald-500/50 hover:bg-[#151928]'
-            }`}
-          >
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="video/*,.mp4,.webm,.mov,.mkv"
-              onChange={handleFileSelect}
-              className="hidden"
-            />
-            <Upload className="w-8 h-8 text-emerald-400 mb-1" />
-            <p className="text-xs font-bold text-slate-200">
-              Drag & Drop your video file here, or <span className="text-emerald-400 underline">Browse Local Files</span>
-            </p>
-            <span className="text-[10px] text-slate-500">
-              Supports MP4, WebM, QuickTime MOV up to 4K resolution.
-            </span>
+          <div className="flex flex-col gap-2.5 pt-1">
+            {uploadedFileName && streamSource === 'file' ? (
+              <div className="bg-[#121520] border border-[#262f45] rounded-xl p-3 flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-2.5">
+                  <div className="p-2 rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                    <FileVideo className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h4 className="text-xs font-bold text-slate-200 truncate max-w-xs sm:max-w-md">
+                      {uploadedFileName}
+                    </h4>
+                    <span className="text-[10px] text-emerald-400 font-semibold flex items-center gap-1">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                      Local Video Ingestion Active (Streaming at 10 FPS)
+                    </span>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={togglePlayback}
+                    className="bg-[#181d2e] hover:bg-[#222a3d] text-slate-200 border border-[#2e374f] px-3 py-1.5 rounded-lg font-semibold flex items-center gap-1.5 transition-all text-xs"
+                  >
+                    {isPlaying ? <Pause className="w-3.5 h-3.5 text-amber-400" /> : <Play className="w-3.5 h-3.5 text-emerald-400 fill-current" />}
+                    <span>{isPlaying ? 'Pause' : 'Play'}</span>
+                  </button>
+
+                  <button
+                    onClick={() => fileInputRef.current?.click()}
+                    className="bg-emerald-500 hover:bg-emerald-400 text-black font-bold px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-all text-xs shadow-sm"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" />
+                    <span>Upload New Video</span>
+                  </button>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="video/*,.mp4,.webm,.mov,.mkv,.avi"
+                    onChange={handleFileSelect}
+                    className="hidden"
+                  />
+                </div>
+              </div>
+            ) : (
+              <label
+                htmlFor="video-file-upload"
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setIsDragOver(true);
+                }}
+                onDragLeave={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setIsDragOver(false);
+                }}
+                onDrop={handleFileDrop}
+                className={`border-2 border-dashed rounded-xl p-6 flex flex-col items-center justify-center gap-2 cursor-pointer transition-all ${
+                  isDragOver
+                    ? 'border-emerald-400 bg-emerald-500/10'
+                    : 'border-[#262f45] bg-[#121520] hover:border-emerald-500/50 hover:bg-[#151928]'
+                }`}
+              >
+                <input
+                  id="video-file-upload"
+                  ref={fileInputRef}
+                  type="file"
+                  accept="video/*,.mp4,.webm,.mov,.mkv,.avi"
+                  onChange={handleFileSelect}
+                  className="sr-only"
+                />
+                <Upload className="w-8 h-8 text-emerald-400 mb-1" />
+                <p className="text-xs font-bold text-slate-200">
+                  Drag & Drop your video file here, or <span className="text-emerald-400 underline">Browse Local Files</span>
+                </p>
+                <span className="text-[10px] text-slate-500">
+                  Supports MP4, WebM, QuickTime MOV, MKV up to 4K resolution.
+                </span>
+              </label>
+            )}
           </div>
         )}
 
@@ -434,7 +509,7 @@ export const VideoStage: React.FC<VideoStageProps> = ({
         {activeTab === 'presets' && (
           <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5 pt-1">
             {PRESET_SCENARIOS.map((preset) => {
-              const isSelected = selectedPresetId === preset.id;
+              const isSelected = selectedPresetId === preset.id && streamSource === 'preset';
               return (
                 <div
                   key={preset.id}
