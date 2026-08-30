@@ -50,20 +50,24 @@ telemetry_broadcast_task = None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Manages application lifecycle: connects broker, launches ML worker, and starts telemetry broadcast."""
+    """Manages application lifecycle based on APP_MODE (STANDALONE, GATEWAY_ONLY, WORKER)."""
     global embedded_worker_instance, embedded_worker_task, telemetry_broadcast_task
-    logger.info("Initializing StreamPulse Gateway & Message Broker...")
+    app_mode = getattr(settings, "APP_MODE", "STANDALONE").upper()
+    logger.info(f"Initializing StreamPulse in execution mode: [{app_mode}]...")
     await redis_manager.connect()
     await redis_manager.ensure_consumer_group()
 
-    # Launch embedded YOLOv8 ML worker for instant autonomous execution
-    try:
-        from app.worker import MLInferenceWorker
-        embedded_worker_instance = MLInferenceWorker(worker_id="worker-embedded-01")
-        embedded_worker_task = asyncio.create_task(embedded_worker_instance.run())
-        logger.info("Embedded YOLOv8 ML Analytics Worker started successfully.")
-    except Exception as e:
-        logger.error(f"Failed to start embedded ML worker: {e}")
+    # Launch embedded YOLOv8 ML worker only if in STANDALONE mode
+    if app_mode in ("STANDALONE", "ALL"):
+        try:
+            from app.worker import MLInferenceWorker
+            embedded_worker_instance = MLInferenceWorker(worker_id="worker-embedded-01")
+            embedded_worker_task = asyncio.create_task(embedded_worker_instance.run())
+            logger.info("Embedded YOLOv8 ML Analytics Worker started successfully in STANDALONE mode.")
+        except Exception as e:
+            logger.error(f"Failed to start embedded ML worker: {e}")
+    elif app_mode in ("GATEWAY", "GATEWAY_ONLY"):
+        logger.info("Operating in GATEWAY_ONLY mode. Decoupled worker cluster handles ML processing via Redis Streams.")
 
     # Launch 2 Hz (500ms) periodic ROI & Token Accounting Telemetry Broadcaster
     async def periodic_telemetry_broadcaster():
@@ -78,7 +82,7 @@ async def lifespan(app: FastAPI):
             logger.warning(f"Periodic telemetry broadcaster error: {e}")
 
     telemetry_broadcast_task = asyncio.create_task(periodic_telemetry_broadcaster())
-    logger.info("StreamPulse Gateway is ready for high-throughput media ingestion and ML broadcast.")
+    logger.info(f"StreamPulse Gateway is ready in [{app_mode}] mode.")
     yield
 
     logger.info("Shutting down StreamPulse Gateway...")
@@ -433,5 +437,44 @@ async def set_context_preset_endpoint(req: PresetUpdateRequest):
     from app.vlm_dispatcher import vlm_dispatcher
     vlm_dispatcher.set_preset(req.preset)
     return {"status": "ok", "preset": req.preset.upper()}
+
+
+# -----------------------------------------------------------------------------
+# System Execution Mode & Scalability Benchmark Endpoints
+# -----------------------------------------------------------------------------
+
+@app.get("/api/v1/system/mode", tags=["System"])
+async def get_system_mode_endpoint():
+    """Returns current microservice deployment mode (STANDALONE, GATEWAY_ONLY, WORKER)."""
+    app_mode = getattr(settings, "APP_MODE", "STANDALONE").upper()
+    return {
+        "app_mode": app_mode,
+        "app_name": settings.APP_NAME,
+        "environment": settings.ENVIRONMENT,
+        "host": settings.HOST,
+        "port": settings.PORT,
+        "redis_host": settings.REDIS_HOST,
+        "workers_replicas": 1 if app_mode == "STANDALONE" else "distributed",
+    }
+
+
+@app.get("/api/v1/benchmark/summary", tags=["Benchmark"])
+async def get_benchmark_summary_endpoint():
+    """Returns live system telemetry and token savings summary for stress benchmarks."""
+    roi = telemetry_service.get_roi_telemetry()
+    process = psutil.Process()
+    return {
+        "app_mode": getattr(settings, "APP_MODE", "STANDALONE").upper(),
+        "total_frames_ingested": roi.total_frames_processed,
+        "static_frames_dropped": roi.static_frames_dropped,
+        "filter_efficiency_pct": roi.filter_efficiency_pct,
+        "cloud_dispatches": roi.cloud_dispatches,
+        "token_reduction_pct": roi.token_stats.token_reduction_pct,
+        "bandwidth_saved_mb": roi.cloud_savings.bandwidth_saved_mb,
+        "projected_monthly_savings_usd": roi.cloud_savings.projected_monthly_savings_usd,
+        "host_cpu_percent": psutil.cpu_percent(interval=None),
+        "process_ram_mb": round(process.memory_info().rss / (1024 * 1024), 1),
+    }
+
 
 

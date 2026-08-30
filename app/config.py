@@ -22,6 +22,7 @@ except ImportError:
 class Settings(_SettingsBase):
     # General Application Settings
     APP_NAME: str = Field(default_factory=lambda: os.getenv("APP_NAME", "StreamPulse"))
+    APP_MODE: str = Field(default_factory=lambda: os.getenv("APP_MODE", "STANDALONE").upper())
     ENVIRONMENT: str = Field(default_factory=lambda: os.getenv("ENVIRONMENT", "production"))
     DEBUG: bool = Field(default_factory=lambda: os.getenv("DEBUG", "false").lower() in ("true", "1"))
     LOG_LEVEL: str = Field(default_factory=lambda: os.getenv("LOG_LEVEL", "INFO"))

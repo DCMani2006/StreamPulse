@@ -27,17 +27,18 @@ services:
       - streampulse-net
 
   # ---------------------------------------------------------------------------
-  # StreamPulse FastAPI Gateway (Ingestion, REST APIs & Telemetry Broadcast)
+  # StreamPulse Decoupled FastAPI Gateway (APP_MODE=GATEWAY_ONLY)
   # ---------------------------------------------------------------------------
-  app:
+  api-gateway:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: streampulse-app
-    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
+    container_name: streampulse-gateway
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2"]
     ports:
       - "8000:8000"
     environment:
+      - APP_MODE=GATEWAY_ONLY
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - ENVIRONMENT=production
@@ -52,15 +53,17 @@ services:
       - streampulse-net
 
   # ---------------------------------------------------------------------------
-  # Distributed ML Analytics Worker (YOLOv8 Object Detection & Audio VAD)
+  # Scalable ML Analytics Workers (APP_MODE=WORKER, Replicas: 2)
   # ---------------------------------------------------------------------------
-  worker:
+  ml-worker:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: streampulse-worker-1
     command: ["python", "-m", "app.worker"]
+    deploy:
+      replicas: 2
     environment:
+      - APP_MODE=WORKER
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - ENVIRONMENT=production
@@ -73,7 +76,7 @@ services:
     depends_on:
       redis:
         condition: service_healthy
-      app:
+      api-gateway:
         condition: service_started
     restart: unless-stopped
     networks:

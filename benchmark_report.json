@@ -1,0 +1,47 @@
+{
+  "test_configuration": {
+    "concurrent_streams": 50,
+    "target_fps_per_camera": 30,
+    "theoretical_aggregated_fps": 1500,
+    "duration_seconds": 5.0
+  },
+  "throughput_and_token_efficiency": {
+    "total_frames_ingested": 5379,
+    "actual_aggregated_fps": 1067.6,
+    "static_frames_dropped": 5124,
+    "edge_drop_rate_percent": 95.26,
+    "candidate_events_dispatched": 255,
+    "actual_vlm_tokens_consumed": 195840,
+    "naive_continuous_tokens": 1409298,
+    "token_savings_percent": 86.1
+  },
+  "latency_sla_benchmarks_ms": {
+    "e2e_roundtrip_latency": {
+      "p50": 24.53,
+      "p90": 33.96,
+      "p95": 35.15,
+      "p99": 104.33,
+      "avg": 26.66
+    },
+    "edge_gatekeeper_latency": {
+      "p50": 0.2,
+      "p90": 0.25,
+      "p95": 0.32,
+      "p99": 0.44,
+      "avg": 0.21
+    },
+    "cv_inference_latency": {
+      "p50": 23.02,
+      "p90": 27.03,
+      "p95": 27.52,
+      "p99": 27.9,
+      "avg": 23.05
+    },
+    "target_sla_ms": 300.0,
+    "sla_compliance_rate_percent": 100.0
+  },
+  "compute_footprint": {
+    "avg_cpu_utilization_percent": 5.7,
+    "peak_process_ram_mb": 115.8
+  }
+}
