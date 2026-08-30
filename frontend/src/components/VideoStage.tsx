@@ -369,6 +369,16 @@ export const VideoStage: React.FC<VideoStageProps> = ({
               <span className="leading-snug">{cameraError}</span>
             </div>
             <div className="flex items-center gap-2 shrink-0">
+              <button
+                onClick={() => {
+                  setActiveTab('presets');
+                  handlePresetSelect(PRESET_SCENARIOS[0]);
+                }}
+                className="bg-emerald-500 hover:bg-emerald-400 text-black font-bold px-3 py-1.5 rounded-lg transition-all text-xs flex items-center gap-1 shadow-sm"
+              >
+                <Sparkles className="w-3.5 h-3.5" />
+                <span>Play Compatible Stream</span>
+              </button>
               {selectedRawFile && uploadVideoToBackend && (
                 <button
                   onClick={handleUploadToBackend}
@@ -393,6 +403,7 @@ export const VideoStage: React.FC<VideoStageProps> = ({
         <div className="absolute inset-0 w-full h-full z-20 pointer-events-auto">
           <LiveVisionCanvas
             canvasRef={overlayCanvasRef}
+            videoRef={videoRef}
             latestTelemetry={latestTelemetry}
             confidenceThreshold={confidenceThreshold}
             streamId={streamId}
