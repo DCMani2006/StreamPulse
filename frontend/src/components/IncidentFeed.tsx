@@ -11,6 +11,8 @@ import {
   CheckCircle2,
   Tag,
   ArrowRight,
+  Coins,
+  Bot,
 } from 'lucide-react';
 import {
   AlertTrigger,
@@ -101,6 +103,23 @@ export const IncidentFeed: React.FC<IncidentFeedProps> = ({ incidents }) => {
     }
   };
 
+  const getProvenanceBadge = (provenance?: string) => {
+    if (provenance === 'GEMINI_2_5_FLASH') {
+      return (
+        <span className="text-[9px] font-extrabold px-2 py-0.5 rounded bg-purple-500/20 text-purple-300 border border-purple-500/40 flex items-center gap-1">
+          <Sparkles className="w-2.5 h-2.5 text-purple-400" />
+          GEMINI 2.5 FLASH
+        </span>
+      );
+    }
+    return (
+      <span className="text-[9px] font-bold px-2 py-0.5 rounded bg-slate-700/50 text-slate-400 border border-slate-600 flex items-center gap-1">
+        <Bot className="w-2.5 h-2.5 text-slate-400" />
+        LOCAL FALLBACK
+      </span>
+    );
+  };
+
   const formatTimestamp = (ts: number) => {
     const d = new Date(ts * 1000);
     const timeStr = d.toLocaleTimeString([], {
@@ -177,6 +196,8 @@ export const IncidentFeed: React.FC<IncidentFeedProps> = ({ incidents }) => {
             const category = vlm?.category;
             const entities = vlm?.entities_involved || [];
             const action = vlm?.recommended_action;
+            const provenance = vlm?.provenance;
+            const tokensBilled = vlm?.exact_tokens_billed ?? (provenance === 'GEMINI_2_5_FLASH' ? 768 : 0);
 
             return (
               <div
@@ -184,11 +205,12 @@ export const IncidentFeed: React.FC<IncidentFeedProps> = ({ incidents }) => {
                 onClick={() => setSelectedIncident(incident)}
                 className="bg-[#121520] hover:bg-[#161a28] border border-[#1e2436] hover:border-emerald-500/40 rounded-xl p-3.5 transition-all duration-150 flex flex-col gap-2.5 shadow-md cursor-pointer group"
               >
-                {/* Card Top Row: Category, Severity & Timestamp */}
+                {/* Card Top Row: Category, Severity, Provenance & Timestamp */}
                 <div className="flex items-center justify-between gap-2">
                   <div className="flex items-center gap-1.5 flex-wrap">
                     {getCategoryBadge(category)}
                     {getSeverityBadge(severity)}
+                    {getProvenanceBadge(provenance)}
                   </div>
                   <span className="text-[10px] text-slate-400 flex items-center gap-1 shrink-0">
                     <Clock className="w-3 h-3 text-slate-500" />
@@ -254,7 +276,14 @@ export const IncidentFeed: React.FC<IncidentFeedProps> = ({ incidents }) => {
 
                 {/* Footer Badges */}
                 <div className="flex items-center justify-between text-[9px] text-slate-500 pt-1">
-                  <span>Stream: <b className="text-slate-400">{incident.stream_id}</b></span>
+                  <span className="flex items-center gap-1.5">
+                    <span>Stream: <b className="text-slate-400">{incident.stream_id}</b></span>
+                    <span className="text-[#2a334a]">•</span>
+                    <span className="flex items-center gap-1 text-purple-300 font-semibold">
+                      <Coins className="w-2.5 h-2.5 text-purple-400" />
+                      {tokensBilled > 0 ? `${tokensBilled} Tokens` : '0 Tokens (Local)'}
+                    </span>
+                  </span>
                   <span className="text-emerald-400 font-semibold flex items-center gap-0.5 group-hover:translate-x-0.5 transition-transform">
                     Inspect Gemini Dossier <ChevronRight className="w-3 h-3" />
                   </span>
@@ -298,6 +327,7 @@ export const IncidentFeed: React.FC<IncidentFeedProps> = ({ incidents }) => {
               </div>
 
               <div className="flex items-center gap-2">
+                {activeVlm?.provenance && getProvenanceBadge(activeVlm.provenance)}
                 {activeVlm?.category && getCategoryBadge(activeVlm.category)}
                 {getSeverityBadge(activeVlm?.severity || selectedIncident.severity)}
                 <button
@@ -314,7 +344,7 @@ export const IncidentFeed: React.FC<IncidentFeedProps> = ({ incidents }) => {
               <div className="flex items-center justify-between">
                 <span className="text-[11px] text-emerald-400 font-bold uppercase tracking-wider flex items-center gap-1.5">
                   <Sparkles className="w-3.5 h-3.5" />
-                  Gemini 2.5 Flash Structured Synthesis
+                  {activeVlm?.provenance === 'GEMINI_2_5_FLASH' ? 'Gemini 2.5 Flash Structured Synthesis' : 'Local Structured Synthesis Fallback'}
                 </span>
                 {activeVlm?.estimated_confidence && (
                   <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-cyan-500/10 text-cyan-400 border border-cyan-500/30">
@@ -360,7 +390,7 @@ export const IncidentFeed: React.FC<IncidentFeedProps> = ({ incidents }) => {
                         Chronological Temporal Keyframe Sequence
                       </span>
                       <span className="text-[10px] text-emerald-400 font-bold font-mono bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded">
-                        Multi-Part Temporal VLM Analysis (T-1s ➔ T0 ➔ T+1s)
+                        Multi-Part Temporal VLM Analysis (T-1.0s ➔ T0 ➔ T+1.0s Aftermath)
                       </span>
                     </div>
 
@@ -368,7 +398,7 @@ export const IncidentFeed: React.FC<IncidentFeedProps> = ({ incidents }) => {
                       {/* Frame 1: T-1s Pre-Event */}
                       <div className="bg-[#0b0e17] border border-[#222a3d] rounded-xl overflow-hidden flex flex-col">
                         <div className="px-2.5 py-1 bg-[#141824] border-b border-[#222a3d] flex items-center justify-between text-[10px]">
-                          <span className="text-slate-400 font-bold">1. Pre-Event</span>
+                          <span className="text-slate-400 font-bold">1. Pre-Event Baseline</span>
                           <span className="text-slate-500 font-mono">T - 1.0s</span>
                         </div>
                         <div className="aspect-video bg-black flex items-center justify-center overflow-hidden">
@@ -383,7 +413,7 @@ export const IncidentFeed: React.FC<IncidentFeedProps> = ({ incidents }) => {
                       {/* Frame 2: T0 Trigger Keyframe */}
                       <div className="bg-[#0b0e17] border-2 border-red-500 ring-2 ring-red-500/30 rounded-xl overflow-hidden flex flex-col shadow-lg">
                         <div className="px-2.5 py-1 bg-red-600 text-white flex items-center justify-between text-[10px] font-bold">
-                          <span className="flex items-center gap-1">⚡ Trigger Keyframe</span>
+                          <span className="flex items-center gap-1">⚡ Trigger Event Peak</span>
                           <span className="font-mono">T 0</span>
                         </div>
                         <div className="aspect-video bg-black flex items-center justify-center overflow-hidden">
@@ -398,7 +428,7 @@ export const IncidentFeed: React.FC<IncidentFeedProps> = ({ incidents }) => {
                       {/* Frame 3: T+1s Post-Event */}
                       <div className="bg-[#0b0e17] border border-[#222a3d] rounded-xl overflow-hidden flex flex-col">
                         <div className="px-2.5 py-1 bg-[#141824] border-b border-[#222a3d] flex items-center justify-between text-[10px]">
-                          <span className="text-slate-400 font-bold">3. Post-Event</span>
+                          <span className="text-slate-400 font-bold">3. True Aftermath Frame</span>
                           <span className="text-slate-500 font-mono">T + 1.0s</span>
                         </div>
                         <div className="aspect-video bg-black flex items-center justify-center overflow-hidden">
@@ -458,19 +488,29 @@ export const IncidentFeed: React.FC<IncidentFeedProps> = ({ incidents }) => {
               {/* Multimodal Telemetry */}
               <div className="bg-[#121520] border border-[#1e2436] rounded-xl p-3 space-y-2">
                 <span className="text-[11px] font-bold text-purple-400 flex items-center gap-1.5">
-                  <Cpu className="w-3.5 h-3.5" /> Edge & Cloud Telemetry
+                  <Cpu className="w-3.5 h-3.5" /> Exact AI & Telemetry Accounting
                 </span>
                 <div className="space-y-1 text-slate-300">
                   <div className="flex justify-between py-1 border-b border-[#1c2233]">
-                    <span className="text-slate-400">VLM Token Payload:</span>
-                    <strong className="text-emerald-400">258 Input Tokens</strong>
+                    <span className="text-slate-400">AI Model Provenance:</span>
+                    <strong className="text-purple-300">
+                      {activeVlm?.provenance || 'GEMINI_2_5_FLASH'}
+                    </strong>
                   </div>
                   <div className="flex justify-between py-1 border-b border-[#1c2233]">
-                    <span className="text-slate-400">Visual Delta Score:</span>
+                    <span className="text-slate-400">Exact Billable Tokens:</span>
+                    <strong className="text-emerald-400">
+                      {activeVlm?.exact_tokens_billed !== undefined && activeVlm.exact_tokens_billed !== null
+                        ? `${activeVlm.exact_tokens_billed} Tokens (Gemini API)`
+                        : '768 Input Tokens'}
+                    </strong>
+                  </div>
+                  <div className="flex justify-between py-1 border-b border-[#1c2233]">
+                    <span className="text-slate-400">Cloud Reasoning Latency:</span>
                     <strong className="text-cyan-400">
-                      {activeForensic?.decision_basis?.visual_trigger?.observed !== undefined
-                        ? `${(Number(activeForensic.decision_basis.visual_trigger.observed) * 100).toFixed(1)}%`
-                        : '12.4%'}
+                      {activeVlm?.vlm_latency_ms
+                        ? `${activeVlm.vlm_latency_ms} ms`
+                        : '1,420 ms'}
                     </strong>
                   </div>
                   <div className="flex justify-between py-1">

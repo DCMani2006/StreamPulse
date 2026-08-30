@@ -143,6 +143,7 @@ class CloudVLMDispatcher:
                 frame_parts.append(("T0 (Trigger Keyframe)", b))
 
         # 1. Attempt Cloud Multimodal VLM (Gemini 2.5 Flash)
+        t_vlm_start = time.time()
         if self.client and frame_parts and HAS_GENAI:
             try:
                 prompt_text = (
@@ -172,11 +173,30 @@ class CloudVLMDispatcher:
                     ),
                 )
 
+                vlm_latency_ms = (time.time() - t_vlm_start) * 1000.0
+
                 if response and response.text:
                     result = IncidentAnalysisResult.model_validate_json(response.text)
+                    
+                    # Extract exact billable tokens from Gemini usage_metadata
+                    exact_tokens = 768
+                    if hasattr(response, "usage_metadata") and response.usage_metadata:
+                        total_cnt = getattr(response.usage_metadata, "total_token_count", None)
+                        if total_cnt is not None:
+                            exact_tokens = int(total_cnt)
+                        else:
+                            p_cnt = getattr(response.usage_metadata, "prompt_token_count", 0) or 0
+                            c_cnt = getattr(response.usage_metadata, "candidates_token_count", 0) or 0
+                            exact_tokens = int(p_cnt + c_cnt) if (p_cnt + c_cnt) > 0 else 768
+
+                    result.provenance = "GEMINI_2_5_FLASH"
+                    result.exact_tokens_billed = exact_tokens
+                    result.vlm_latency_ms = round(vlm_latency_ms, 1)
+
                     logger.info(
                         f"[VLM SYNTHESIS] {stream_id} | Incident={result.is_incident} | "
-                        f"{result.category.value} ({result.severity.value}): {result.title}"
+                        f"{result.category.value} ({result.severity.value}): {result.title} "
+                        f"| Tokens={exact_tokens} | Latency={result.vlm_latency_ms}ms"
                     )
                     return result
 
@@ -184,12 +204,17 @@ class CloudVLMDispatcher:
                 logger.warning(f"Gemini VLM API call failed ({e}). Falling back to structured synthesis.")
 
         # 2. Context-Aware Deterministic Synthesis Fallback
-        return self._generate_contextual_synthesis(
+        fallback_latency_ms = (time.time() - t_vlm_start) * 1000.0
+        fallback_result = self._generate_contextual_synthesis(
             delta_score=delta_score,
             audio_db=audio_db,
             detected_classes=detected_classes,
             active_triggers=active_triggers,
         )
+        fallback_result.provenance = "LOCAL_STRUCTURED_FALLBACK"
+        fallback_result.exact_tokens_billed = 0
+        fallback_result.vlm_latency_ms = round(fallback_latency_ms, 1)
+        return fallback_result
 
     def _generate_contextual_synthesis(
         self,

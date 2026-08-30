@@ -131,6 +131,9 @@ export interface IncidentAnalysisResult {
   entities_involved: string[];
   recommended_action: string;
   estimated_confidence: number;
+  provenance?: 'GEMINI_2_5_FLASH' | 'LOCAL_STRUCTURED_FALLBACK';
+  exact_tokens_billed?: number;
+  vlm_latency_ms?: number;
 }
 
 export interface ForensicAnomalyIncident {
@@ -164,6 +167,13 @@ export interface AlertTrigger {
   temporal_keyframes?: string[];
 }
 
+export interface TriTierLatencyDetail {
+  edge_filter_ms: number;
+  ingest_hud_e2e_ms: number;
+  cloud_vlm_ms: number;
+  sla_compliant: boolean;
+}
+
 export interface TokenStatsDetail {
   tokens_consumed: number;
   tokens_saved: number;
@@ -186,6 +196,7 @@ export interface ROITelemetrySnapshot {
   candidate_triggers: number;
   cloud_dispatches: number;
   confirmed_incidents: number;
+  tri_tier_latency?: TriTierLatencyDetail;
   token_stats: TokenStatsDetail;
   cloud_savings: CloudSavingsDetail;
 }

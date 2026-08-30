@@ -9,6 +9,7 @@ import socket
 import sys
 import time
 import uuid
+from collections import deque
 from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 from ultralytics import YOLO
@@ -38,6 +39,7 @@ from app.schemas import (
     DetectionResult,
     ForensicAnomalyIncident,
     IncidentAnalysisResult,
+    LatencyTelemetry,
     ROINormalizedBox,
     StreamROIConfig,
     StreamTelemetryPayload,
@@ -410,13 +412,6 @@ class MLInferenceWorker:
 
         # FAST-PATH: Drop static / redundant surveillance frames (<1.5ms, >95% VLM token reduction)
         if is_static:
-            telemetry_service.record_frame_ingest(
-                is_static=True,
-                filter_latency_ms=gatekeeper_latency_ms,
-                is_candidate_trigger=False,
-            )
-            roi_telemetry = telemetry_service.get_roi_telemetry()
-
             t_worker_done = time.time()
             t_broadcast = time.time()
             latency = calculate_latency_metrics(
@@ -427,6 +422,14 @@ class MLInferenceWorker:
                 t_broadcast=t_broadcast,
                 sla_target_ms=settings.TARGET_LATENCY_SLA_MS,
             )
+
+            telemetry_service.record_frame_ingest(
+                is_static=True,
+                filter_latency_ms=gatekeeper_latency_ms,
+                is_candidate_trigger=False,
+                hud_latency_ms=latency.e2e_latency_ms,
+            )
+            roi_telemetry = telemetry_service.get_roi_telemetry()
 
             telemetry_payload = StreamTelemetryPayload(
                 stream_id=stream_id,
@@ -443,8 +446,13 @@ class MLInferenceWorker:
                 detections=[],
                 person_count=0,
                 total_objects=0,
+                audio_analysis=None,
                 alerts=[],
-                anomaly_rationale=f"STATIC_FRAME: Redundant video frame filtered (Delta={delta_score:.3f} < {gatekeeper.delta_threshold}). Token reduction: {stats_obj.bandwidth_saving_percent}%.",
+                forensic_incident=None,
+                decision_basis=None,
+                vlm_synthesis=None,
+                stream_roi=await self.get_cached_roi_config(stream_id),
+                anomaly_rationale="Static surveillance frame dropped by Edge Gatekeeper (<2ms filter, 0 VLM tokens billed).",
                 latency=latency,
             )
 
@@ -455,12 +463,6 @@ class MLInferenceWorker:
             return
 
         # CANDIDATE EVENT PATH: Active visual motion or acoustic trigger
-        telemetry_service.record_frame_ingest(
-            is_static=False,
-            filter_latency_ms=gatekeeper_latency_ms,
-            is_candidate_trigger=True,
-        )
-
         detections, person_count, img_width, img_height = self.run_cv_inference(raw_image) if raw_image is not None else ([], 0, 0, 0)
         config = await self.get_cached_alert_config(stream_id)
         roi_config = await self.get_cached_roi_config(stream_id)
@@ -491,9 +493,15 @@ class MLInferenceWorker:
             sla_target_ms=settings.TARGET_LATENCY_SLA_MS,
         )
 
+        telemetry_service.record_frame_ingest(
+            is_static=False,
+            filter_latency_ms=gatekeeper_latency_ms,
+            is_candidate_trigger=len(triggered_rules) > 0,
+            hud_latency_ms=latency.e2e_latency_ms,
+        )
+
         # 5. Forensic Snapshot & Cloud Multimodal VLM Synthesis for Candidate Events
         forensic_incident: Optional[ForensicAnomalyIncident] = None
-        vlm_result: Optional[IncidentAnalysisResult] = None
         now_ts = time.time()
         last_snap = self.last_snapshot_time.get(stream_id, 0.0)
         should_capture_snapshot = (
@@ -518,7 +526,129 @@ class MLInferenceWorker:
                 pre_frame = closest_item[1]
 
             event_frame = raw_image
-            post_frame = t_buf[-1][1] if len(t_buf) > 0 else raw_image
+            
+            fast_annotated = draw_forensic_annotations(
+                image=raw_image,
+                detections=[d.model_dump(by_alias=True) for d in detection_details],
+                restricted_zone=None,
+                incident_id=incident_id,
+                timestamp_utc=timestamp_utc,
+                anomaly_summary=anomaly_rationale,
+                max_dim=640,
+            )
+            fast_snap_b64 = encode_image_to_data_uri_fast(fast_annotated, max_dim=640, quality=65)
+
+            for alert in alerts:
+                alert.snapshot_url = fast_snap_b64
+
+            # Launch non-blocking background task for true aftermath (T+1s) forensics
+            asyncio.create_task(
+                self._dispatch_async_temporal_forensics(
+                    stream_id=stream_id,
+                    incident_id=incident_id,
+                    timestamp_utc=timestamp_utc,
+                    epoch_ms=epoch_ms,
+                    t_client=t_client,
+                    pre_frame=pre_frame,
+                    event_frame=event_frame,
+                    delta_score=delta_score,
+                    audio_db=audio_db,
+                    audio_rms=audio_rms,
+                    audio_trigger_fired=audio_trigger_fired,
+                    detection_details=detection_details,
+                    detections=detections,
+                    triggered_rules=triggered_rules,
+                    decision_basis=decision_basis,
+                    latency=latency,
+                    current_fps=current_fps,
+                )
+            )
+
+        roi_telemetry = telemetry_service.get_roi_telemetry()
+
+        telemetry_payload = StreamTelemetryPayload(
+            stream_id=stream_id,
+            sequence_id=sequence_id,
+            frame_id=sequence_id,
+            timestamp=t_broadcast,
+            worker_id=self.worker_id,
+            is_static=False,
+            delta_score=delta_score,
+            audio_db=audio_db,
+            trigger_fired=audio_trigger_fired or len(alerts) > 0,
+            stats=stats_obj,
+            roi_telemetry=roi_telemetry,
+            detections=detections,
+            person_count=person_count,
+            total_objects=len(detections),
+            alerts=alerts,
+            forensic_incident=forensic_incident,
+            decision_basis=decision_basis,
+            vlm_synthesis=vlm_result,
+            stream_roi=roi_config,
+            anomaly_rationale=anomaly_rationale,
+            latency=latency,
+            frame_width=img_width,
+            frame_height=img_height,
+        )
+
+        payload_dict = telemetry_payload.model_dump(by_alias=True)
+        await redis_manager.publish_telemetry(stream_id, payload_dict)
+
+        await redis_manager.record_metric_sample(
+            stream_id=stream_id,
+            e2e_ms=latency.e2e_latency_ms,
+            ingest_ms=latency.ingestion_latency_ms,
+            queue_ms=latency.queue_dwell_time_ms,
+            infer_ms=latency.inference_time_ms,
+            has_alert=len(alerts) > 0,
+        )
+
+        for alert in alerts:
+            await redis_manager.log_alert_incident(stream_id, alert.model_dump())
+
+        await redis_manager.ack_message(msg_id)
+        self.processed_count += 1
+        self.total_infer_time_ms += latency.inference_time_ms
+
+    async def _dispatch_async_temporal_forensics(
+        self,
+        stream_id: str,
+        incident_id: str,
+        timestamp_utc: str,
+        epoch_ms: int,
+        t_client: float,
+        pre_frame: np.ndarray,
+        event_frame: np.ndarray,
+        delta_score: float,
+        audio_db: float,
+        audio_rms: float,
+        audio_trigger_fired: bool,
+        detection_details: List[DetectionDetail],
+        detections: List[DetectionResult],
+        triggered_rules: List[TriggeredRuleDetail],
+        decision_basis: DecisionBasis,
+        latency: LatencyTelemetry,
+        current_fps: float,
+    ) -> None:
+        """
+        True Future Frame (T+1s) Asynchronous Forensics Dispatcher:
+        1. Waits ~1.0s asynchronously without blocking the live streaming pipeline.
+        2. Gathers the true T+1s aftermath frame from the active rolling buffer.
+        3. Encodes the complete chronological 3-frame sequence [T-1s, T0, T+1s].
+        4. Invokes Google Gemini 2.5 Flash asynchronously.
+        5. Records exact billable tokens and Tri-Tier latency in telemetry_service.
+        6. Logs forensic incident to Redis and publishes multi-camera correlation.
+        """
+        try:
+            # 1. Asynchronously wait 1.0s to capture true aftermath frame while pipeline runs
+            await asyncio.sleep(1.0)
+
+            # 2. Extract true T+1s post-event aftermath frame from rolling buffer
+            t_buf = self.get_temporal_buffer(stream_id)
+            post_frame = event_frame
+            if len(t_buf) > 0:
+                post_frame = t_buf[-1][1]
 
             temporal_sequence = [pre_frame, event_frame, post_frame]
             temporal_keyframes = [
@@ -526,27 +656,26 @@ class MLInferenceWorker:
                 for f in temporal_sequence
             ]
 
-            # Asynchronous Cloud Multimodal VLM Analysis (Gemini 2.5 Flash with 3-frame sequence)
-            try:
-                loop = asyncio.get_running_loop()
-                vlm_result = await loop.run_in_executor(
-                    self.thread_pool,
-                    vlm_dispatcher.analyze_candidate_event,
-                    stream_id,
-                    raw_image,
-                    delta_score,
-                    audio_db,
-                    [d.label for d in detections],
-                    [r.rule_id for r in triggered_rules],
-                    temporal_sequence,
+            # 3. Asynchronous Cloud Multimodal VLM Analysis (Gemini 2.5 Flash)
+            loop = asyncio.get_running_loop()
+            vlm_result: IncidentAnalysisResult = await loop.run_in_executor(
+                self.thread_pool,
+                vlm_dispatcher.analyze_candidate_event,
+                stream_id,
+                event_frame,
+                delta_score,
+                audio_db,
+                [d.label for d in detections],
+                [r.rule_id for r in triggered_rules],
+                temporal_sequence,
+            )
+
+            if vlm_result:
+                telemetry_service.record_cloud_dispatch(
+                    tokens_used=vlm_result.exact_tokens_billed or (768 if vlm_result.provenance == "GEMINI_2_5_FLASH" else 0),
+                    is_incident=vlm_result.is_incident,
+                    vlm_latency_ms=vlm_result.vlm_latency_ms,
                 )
-                if vlm_result:
-                    telemetry_service.record_cloud_dispatch(
-                        tokens_used=768,
-                        is_incident=vlm_result.is_incident,
-                    )
-            except Exception as e:
-                logger.warning(f"VLM Dispatcher execution error: {e}")
 
             has_critical = any(
                 r.rule_id in ("RULE_AUDIO_TRANSIENT_SPIKE", "RULE_PROHIBITED_OBJECT", "RULE_RESTRICTED_ZONE")
@@ -558,11 +687,10 @@ class MLInferenceWorker:
                 if vlm_result
                 else " | ".join([f"{r.rule_id}: {r.target_class or 'event'}" for r in triggered_rules])
             )
-            if vlm_result and vlm_result.description:
-                anomaly_rationale = vlm_result.description
+            anomaly_rationale = vlm_result.description if (vlm_result and vlm_result.description) else "Candidate anomaly threshold exceeded."
 
             annotated_img = draw_forensic_annotations(
-                image=raw_image,
+                image=event_frame,
                 detections=[d.model_dump(by_alias=True) for d in detection_details],
                 restricted_zone=None,
                 incident_id=incident_id,
@@ -628,68 +756,27 @@ class MLInferenceWorker:
                     timestamp=t_client,
                 )
                 if correlated:
-                    asyncio.create_task(
-                        redis_manager.publish_telemetry("global", correlated.model_dump())
-                    )
+                    await redis_manager.publish_telemetry("global", correlated.model_dump())
             except Exception as e:
                 logger.warning(f"Cross-camera aggregator recording error: {e}")
 
-            asyncio.create_task(
-                redis_manager.log_forensic_incident(
-                    stream_id=stream_id,
-                    incident_dict=forensic_incident.model_dump(by_alias=True),
-                )
+            await redis_manager.log_forensic_incident(
+                stream_id=stream_id,
+                incident_dict=forensic_incident.model_dump(by_alias=True),
             )
 
-            for alert in alerts:
-                alert.snapshot_url = snapshot_annotated_base64
+            # Publish updated incident dossier to telemetry channel
+            await redis_manager.publish_telemetry(
+                stream_id,
+                {
+                    "type": "FORENSIC_INCIDENT_DOSSIER",
+                    "stream_id": stream_id,
+                    "forensic_incident": forensic_incident.model_dump(by_alias=True),
+                },
+            )
 
-        roi_telemetry = telemetry_service.get_roi_telemetry()
-
-        telemetry_payload = StreamTelemetryPayload(
-            stream_id=stream_id,
-            sequence_id=sequence_id,
-            frame_id=sequence_id,
-            timestamp=t_broadcast,
-            worker_id=self.worker_id,
-            is_static=False,
-            delta_score=delta_score,
-            audio_db=audio_db,
-            trigger_fired=audio_trigger_fired or len(alerts) > 0,
-            stats=stats_obj,
-            roi_telemetry=roi_telemetry,
-            detections=detections,
-            person_count=person_count,
-            total_objects=len(detections),
-            alerts=alerts,
-            forensic_incident=forensic_incident,
-            decision_basis=decision_basis,
-            vlm_synthesis=vlm_result,
-            stream_roi=roi_config,
-            anomaly_rationale=anomaly_rationale,
-            latency=latency,
-            frame_width=img_width,
-            frame_height=img_height,
-        )
-
-        payload_dict = telemetry_payload.model_dump(by_alias=True)
-        await redis_manager.publish_telemetry(stream_id, payload_dict)
-
-        await redis_manager.record_metric_sample(
-            stream_id=stream_id,
-            e2e_ms=latency.e2e_latency_ms,
-            ingest_ms=latency.ingestion_latency_ms,
-            queue_ms=latency.queue_dwell_time_ms,
-            infer_ms=latency.inference_time_ms,
-            has_alert=len(alerts) > 0,
-        )
-
-        for alert in alerts:
-            await redis_manager.log_alert_incident(stream_id, alert.model_dump())
-
-        await redis_manager.ack_message(msg_id)
-        self.processed_count += 1
-        self.total_infer_time_ms += latency.inference_time_ms
+        except Exception as e:
+            logger.error(f"Error in async temporal forensics dispatch: {e}", exc_info=True)
 
     async def run(self) -> None:
         self.running = True

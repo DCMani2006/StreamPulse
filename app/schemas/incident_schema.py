@@ -35,6 +35,7 @@ class IncidentAnalysisResult(BaseModel):
         description="Forensic summary detailing what occurred, affected entities, and visual/audio cues."
     )
     entities_involved: List[str] = Field(
+        default_factory=list,
         description="Key objects or people identified (e.g. ['Forklift #2', 'Pedestrian', 'SUV'])."
     )
     recommended_action: str = Field(
@@ -42,4 +43,16 @@ class IncidentAnalysisResult(BaseModel):
     )
     estimated_confidence: float = Field(
         description="Confidence score between 0.0 and 1.0."
+    )
+    provenance: str = Field(
+        default="LOCAL_STRUCTURED_FALLBACK",
+        description="AI model provenance: GEMINI_2_5_FLASH or LOCAL_STRUCTURED_FALLBACK."
+    )
+    exact_tokens_billed: Optional[int] = Field(
+        default=None,
+        description="Exact billable token payload returned from Gemini usage_metadata."
+    )
+    vlm_latency_ms: Optional[float] = Field(
+        default=None,
+        description="Asynchronous cloud reasoning latency in milliseconds."
     )
