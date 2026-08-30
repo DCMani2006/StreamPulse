@@ -6,6 +6,7 @@ import {
   CheckCircle2,
 } from 'lucide-react';
 import { CorrelatedMultiCameraIncident } from '../types';
+import { getBackendApiUrl } from '../config/api';
 
 interface GlobalIncidentTimelineProps {
   apiBaseUrl?: string;
@@ -13,9 +14,10 @@ interface GlobalIncidentTimelineProps {
 }
 
 export const GlobalIncidentTimeline: React.FC<GlobalIncidentTimelineProps> = ({
-  apiBaseUrl = 'http://localhost:8000',
+  apiBaseUrl,
   onSelectIncident,
 }) => {
+  const resolvedApiBaseUrl = apiBaseUrl || getBackendApiUrl();
   const [activeTab, setActiveTab] = useState<'correlated' | 'unified'>('correlated');
   const [correlatedList, setCorrelatedList] = useState<CorrelatedMultiCameraIncident[]>([]);
   const [unifiedEvents, setUnifiedEvents] = useState<any[]>([]);
@@ -24,8 +26,8 @@ export const GlobalIncidentTimeline: React.FC<GlobalIncidentTimelineProps> = ({
   const fetchTimelineData = async () => {
     try {
       const [corrRes, uniRes] = await Promise.all([
-        fetch(`${apiBaseUrl}/api/v1/incidents/correlated?limit=20`),
-        fetch(`${apiBaseUrl}/api/v1/timeline/unified?limit=30`),
+        fetch(`${resolvedApiBaseUrl}/api/v1/incidents/correlated?limit=20`),
+        fetch(`${resolvedApiBaseUrl}/api/v1/timeline/unified?limit=30`),
       ]);
 
       if (corrRes.ok) {

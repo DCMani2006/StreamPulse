@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import { StreamTelemetryPayload, StreamSourceType, PresetScenario } from '../types';
 import { LiveVisionCanvas } from './LiveVisionCanvas';
+import { getBackendApiUrl } from '../config/api';
 
 interface VideoStageProps {
   videoRef: React.RefObject<HTMLVideoElement>;
@@ -252,10 +253,8 @@ export const VideoStage: React.FC<VideoStageProps> = ({
       const result = await uploadVideoToBackend(selectedRawFile);
       setBackendUploadMessage(`Uploaded successfully (${result.file_size_mb} MB, ${result.fps} FPS). Initializing feed...`);
       
-      const host = window.location.hostname || 'localhost';
-      const port = '8000';
-      const protocol = window.location.protocol === 'https:' ? 'https:' : 'http:';
-      const fullPlaybackUrl = `${protocol}//${host}:${port}${result.playback_url}`;
+      const apiUrl = getBackendApiUrl();
+      const fullPlaybackUrl = `${apiUrl}${result.playback_url}`;
       
       loadVideoUrl(fullPlaybackUrl);
       setIsPlaying(true);

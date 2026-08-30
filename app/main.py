@@ -336,6 +336,96 @@ async def upload_large_video_endpoint(
         )
 
 
+active_video_stream_tasks: Dict[str, asyncio.Task] = {}
+
+
+class VideoProcessPayload(BaseModel):
+    file_path: str = Field(..., description="Path to uploaded video file on server")
+    stream_id: str = Field("uploaded_stream", description="Target stream identifier")
+    fps: Optional[int] = Field(30, description="Target playback frame rate")
+    loop: Optional[bool] = Field(True, description="Whether to loop video file indefinitely")
+
+
+async def _background_video_streamer(file_path: str, stream_id: str, target_fps: int = 30, loop: bool = True):
+    """Asynchronously decodes uploaded surveillance video and feeds frames into the ML pipeline."""
+    import base64
+    try:
+        import cv2
+    except ImportError:
+        logger.warning("OpenCV not installed; cannot stream uploaded video frames.")
+        return
+
+    frame_interval = 1.0 / max(1, target_fps)
+    seq = 0
+    logger.info(f"Started background video ingestion worker for '{stream_id}' ({file_path}) at {target_fps} FPS")
+
+    try:
+        while True:
+            cap = cv2.VideoCapture(file_path)
+            if not cap.isOpened():
+                logger.error(f"Could not open uploaded video file: {file_path}")
+                break
+
+            while cap.isOpened():
+                t_start = time.time()
+                ret, frame = cap.read()
+                if not ret:
+                    break
+
+                seq += 1
+                h, w = frame.shape[:2]
+                scale = min(1.0, 640.0 / max(h, w))
+                small = cv2.resize(frame, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_LINEAR)
+                _, buf = cv2.imencode(".jpg", small, [int(cv2.IMWRITE_JPEG_QUALITY), 70])
+                b64_frame = f"data:image/jpeg;base64,{base64.b64encode(buf.tobytes()).decode('utf-8')}"
+
+                await redis_manager.xadd_frame(
+                    stream_id=stream_id,
+                    sequence_id=seq,
+                    t_client=t_start,
+                    t_ingest=t_start,
+                    frame_base64=b64_frame,
+                    metadata={"source": "cloud_video_upload", "file_path": file_path},
+                )
+
+                elapsed = time.time() - t_start
+                sleep_sec = max(0.001, frame_interval - elapsed)
+                await asyncio.sleep(sleep_sec)
+
+            cap.release()
+            if not loop:
+                break
+            await asyncio.sleep(0.5)
+
+    except asyncio.CancelledError:
+        logger.info(f"Background video ingestion for '{stream_id}' cancelled.")
+    except Exception as e:
+        logger.error(f"Error in background video streamer: {e}")
+
+
+@app.post("/api/v1/video/process", tags=["Ingestion"])
+async def process_uploaded_video_endpoint(payload: VideoProcessPayload):
+    """Starts background video streamer for an uploaded surveillance file."""
+    if payload.stream_id in active_video_stream_tasks:
+        active_video_stream_tasks[payload.stream_id].cancel()
+
+    task = asyncio.create_task(
+        _background_video_streamer(
+            file_path=payload.file_path,
+            stream_id=payload.stream_id,
+            target_fps=payload.fps or 30,
+            loop=payload.loop if payload.loop is not None else True,
+        )
+    )
+    active_video_stream_tasks[payload.stream_id] = task
+    return {
+        "status": "processing_started",
+        "stream_id": payload.stream_id,
+        "file_path": payload.file_path,
+        "fps": payload.fps or 30,
+    }
+
+
 # -----------------------------------------------------------------------------
 # Dynamic Draggable ROI Endpoints
 # -----------------------------------------------------------------------------

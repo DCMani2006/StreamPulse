@@ -8,6 +8,7 @@ import {
   StreamSourceType,
   DetectionResult,
 } from '../types';
+import { getBackendApiUrl, getBackendWsUrl } from '../config/api';
 
 interface UseStreamPulseProps {
   streamId: string;
@@ -343,10 +344,8 @@ export function useStreamPulse({
       formData.append('file', file);
       formData.append('stream_id', streamId);
 
-      const host = window.location.hostname || 'localhost';
-      const port = '8000';
-      const protocol = window.location.protocol === 'https:' ? 'https:' : 'http:';
-      const uploadUrl = `${protocol}//${host}:${port}/api/v1/video/upload`;
+      const apiUrl = getBackendApiUrl();
+      const uploadUrl = `${apiUrl}/api/v1/video/upload`;
 
       try {
         const response = await fetch(uploadUrl, {
@@ -358,6 +357,23 @@ export function useStreamPulse({
         }
         const data = await response.json();
         console.log('[StreamPulse] Large video uploaded to backend successfully:', data);
+
+        // Notify backend to spin up live frame processing task if available
+        try {
+          await fetch(`${apiUrl}/api/v1/video/process`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              file_path: data.file_path,
+              stream_id: streamId,
+              fps: Math.round(data.fps || 30),
+              loop: true,
+            }),
+          });
+        } catch (e) {
+          // Non-blocking
+        }
+
         return data;
       } catch (err) {
         console.error('Error uploading large video to backend:', err);
@@ -454,12 +470,8 @@ export function useStreamPulse({
     let reconnectTimeout: any = null;
 
     const connectWebSockets = () => {
-      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const host = window.location.hostname || 'localhost';
-      const port = '8000';
-
-      const ingestUrl = `${protocol}//${host}:${port}/ws/ingest/${streamId}`;
-      const telemetryUrl = `${protocol}//${host}:${port}/ws/telemetry/${streamId}`;
+      const ingestUrl = getBackendWsUrl(streamId, 'ingest');
+      const telemetryUrl = getBackendWsUrl(streamId, 'telemetry');
 
       try {
         const ingestWs = new WebSocket(ingestUrl);
