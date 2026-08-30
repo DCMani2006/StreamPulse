@@ -84,7 +84,7 @@ export const App: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen bg-[#08090e] text-slate-100 flex flex-col font-sans selection:bg-emerald-500 selection:text-black">
+    <div className="min-h-screen bg-[#050508] text-zinc-100 flex flex-col font-sans selection:bg-green-500 selection:text-black">
       
       {/* Top Enterprise Navigation Header */}
       <Navbar
@@ -102,14 +102,13 @@ export const App: React.FC = () => {
       {/* Main Command Center Stage */}
       <main className="flex-1 max-w-[1920px] w-full mx-auto p-4 md:p-6 flex flex-col gap-5">
         
-        {/* 1. Cloud Token & Cost Accounting KPI Hero Bar */}
+        {/* 1. Cloud Token ROI & Cost Accounting Hero Bar */}
         <CloudRoiBar
-          roiTelemetry={latestTelemetry?.roi_telemetry}
-          stats={latestTelemetry?.stats}
+          latestTelemetry={latestTelemetry}
         />
 
         {/* 2. Domain Preset Context Switcher */}
-        <div className="bg-[#0e111a] border border-[#1c2233] rounded-2xl p-3.5 shadow-md">
+        <div className="bg-[#0e0e16] border border-[#1f1f2e] rounded-xl p-3.5 shadow-xl">
           <PresetSelector
             currentPreset={activePreset}
             onPresetChange={handlePresetChange}
@@ -171,13 +170,13 @@ export const App: React.FC = () => {
             />
 
             {/* Tab Selector for Single Feed Dossiers vs Cross-Stream Correlation */}
-            <div className="flex items-center gap-1 bg-[#0e111a] p-1 rounded-xl border border-[#1c2233] text-xs font-mono">
+            <div className="flex items-center gap-1 bg-[#0e0e16] p-1 rounded-xl border border-[#1f1f2e] text-xs font-mono">
               <button
                 onClick={() => setActiveFeedTab('dossiers')}
                 className={`flex-1 py-1.5 rounded-lg transition-all font-bold text-center ${
                   activeFeedTab === 'dossiers'
-                    ? 'bg-emerald-500 text-black shadow-sm'
-                    : 'text-slate-400 hover:text-white'
+                    ? 'bg-green-500 text-black shadow-sm font-black'
+                    : 'text-zinc-400 hover:text-white'
                 }`}
               >
                 VLM Dossiers
@@ -186,8 +185,8 @@ export const App: React.FC = () => {
                 onClick={() => setActiveFeedTab('correlation')}
                 className={`flex-1 py-1.5 rounded-lg transition-all font-bold text-center ${
                   activeFeedTab === 'correlation'
-                    ? 'bg-purple-600 text-white shadow-sm'
-                    : 'text-slate-400 hover:text-white'
+                    ? 'bg-purple-600 text-white shadow-sm font-black'
+                    : 'text-zinc-400 hover:text-white'
                 }`}
               >
                 Cross-Camera Chains

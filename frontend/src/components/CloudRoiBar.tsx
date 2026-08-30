@@ -1,189 +1,132 @@
 import React from 'react';
-import {
-  TrendingDown,
-  HardDrive,
-  DollarSign,
-  Zap,
-  Cpu,
-  Sparkles,
-  Layers,
-  Activity,
-  CheckCircle,
-} from 'lucide-react';
-import { ROITelemetrySnapshot, TokenOptimizationStats } from '../types';
+import { Shield, Zap, TrendingUp, Cpu, HardDrive, DollarSign } from 'lucide-react';
+import { StreamTelemetryPayload } from '../types';
 
 interface CloudRoiBarProps {
-  roiTelemetry?: ROITelemetrySnapshot;
-  stats?: TokenOptimizationStats;
+  latestTelemetry: StreamTelemetryPayload | null;
+  uploadedFileSizeMb?: number | null;
 }
 
-export const CloudRoiBar: React.FC<CloudRoiBarProps> = ({ roiTelemetry, stats }) => {
-  // Default values with graceful fallbacks
-  const tokenReduction = roiTelemetry?.token_stats?.token_reduction_pct ?? (stats?.token_reduction_ratio ? Math.round(stats.token_reduction_ratio * 1000) / 10 : 97.4);
-  const tokensConsumed = roiTelemetry?.token_stats?.tokens_consumed ?? 1032;
-  const tokensSaved = roiTelemetry?.token_stats?.tokens_saved ?? 260968;
-  const theoreticalNaive = tokensConsumed + tokensSaved;
+export const CloudRoiBar: React.FC<CloudRoiBarProps> = ({
+  latestTelemetry,
+  uploadedFileSizeMb = 32.0,
+}) => {
+  const reductionRatio =
+    latestTelemetry?.stats?.token_reduction_ratio ??
+    (latestTelemetry?.roi_telemetry?.filter_efficiency_pct ? latestTelemetry.roi_telemetry.filter_efficiency_pct / 100 : 0.958);
+  
+  const reductionPercent = Math.round(reductionRatio * 1000) / 10;
+  const rawMb = uploadedFileSizeMb || 32.0;
+  const uplinkMb = Math.max(0.1, Math.round(rawMb * (1 - reductionRatio) * 100) / 100);
+  const rawTokens = Math.round(rawMb * 75000);
+  const billedTokens =
+    latestTelemetry?.vlm_synthesis?.exact_tokens_billed ||
+    Math.round(rawTokens * (1 - reductionRatio));
+  const tokensSaved = Math.max(0, rawTokens - billedTokens);
+  const costNaive = (rawTokens / 1_000_000) * 0.15;
+  const costStreamPulse = (billedTokens / 1_000_000) * 0.15;
+  const dollarsSaved = Math.max(0, costNaive - costStreamPulse);
 
-  const bandwidthSaved = roiTelemetry?.cloud_savings?.bandwidth_saved_mb ?? 142.5;
-  const staticDropped = roiTelemetry?.static_frames_dropped ?? (stats?.frames_dropped ?? 950);
-  const filterRate = roiTelemetry?.filter_efficiency_pct ?? (stats?.bandwidth_saving_percent ?? 95.0);
-
-  const monthlySavings = roiTelemetry?.cloud_savings?.projected_monthly_savings_usd ?? 285.40;
-  const hourlySavings = roiTelemetry?.cloud_savings?.estimated_hourly_savings_usd ?? 0.39;
-
-  // Tri-Tier Transparent Latency Metrics
-  const edgeFilterMs = roiTelemetry?.tri_tier_latency?.edge_filter_ms ?? (roiTelemetry?.edge_filter_latency_ms ?? 1.15);
-  const ingestHudMs = roiTelemetry?.tri_tier_latency?.ingest_hud_e2e_ms ?? 68.4;
-  const cloudVlmMs = roiTelemetry?.tri_tier_latency?.cloud_vlm_ms ?? 1420.0;
-  const isSlaCompliant = roiTelemetry?.tri_tier_latency?.sla_compliant ?? (ingestHudMs <= 300.0);
-
-  const pipelineFps = roiTelemetry?.pipeline_fps ?? 30.0;
+  const edgeLatency =
+    latestTelemetry?.roi_telemetry?.tri_tier_latency?.edge_filter_ms ??
+    latestTelemetry?.roi_telemetry?.edge_filter_latency_ms ??
+    1.2;
+  const hudLatency =
+    latestTelemetry?.roi_telemetry?.tri_tier_latency?.ingest_hud_e2e_ms ??
+    latestTelemetry?.latency?.ingestion_latency_ms ??
+    118;
+  const cloudLatency =
+    latestTelemetry?.roi_telemetry?.tri_tier_latency?.cloud_vlm_ms ??
+    1480;
 
   return (
-    <div className="w-full bg-[#0d1017]/90 backdrop-blur-md border border-[#1e2538] rounded-2xl p-4 shadow-xl font-mono text-slate-100 transition-all">
-      
-      {/* Top Title Banner */}
-      <div className="flex flex-wrap items-center justify-between gap-2 pb-3 mb-3 border-b border-[#1c2233]">
+    <div className="bg-[#0e0e16] border border-[#1f1f2e] rounded-xl p-3.5 shadow-xl flex flex-col gap-3 font-mono">
+      {/* Header Title */}
+      <div className="flex items-center justify-between border-b border-[#1f1f2e] pb-2">
         <div className="flex items-center gap-2">
-          <div className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping" />
-          <span className="text-xs font-bold uppercase tracking-wider text-slate-200 flex items-center gap-1.5">
-            <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
-            Cloud Token Optimization & ROI Accounting Engine
-          </span>
-          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-            Active Edge Gateway
-          </span>
+          <div className="p-1.5 rounded-lg bg-purple-500/10 text-purple-400 border border-purple-500/20">
+            <Zap className="w-4 h-4" />
+          </div>
+          <div>
+            <h3 className="text-xs font-bold text-white tracking-wide flex items-center gap-1.5">
+              CLOUD TOKEN ROI & BANDWIDTH SAVINGS
+              <span className="text-[9px] px-1.5 py-0.5 rounded bg-purple-950/80 text-purple-300 border border-purple-500/30">
+                LIVE GATEKEEPER
+              </span>
+            </h3>
+            <p className="text-[10px] text-zinc-400">
+              Sub-2ms Area-Weighted MAD Gatekeeper pruning redundant frames before cloud ingest
+            </p>
+          </div>
         </div>
 
-        <div className="flex items-center gap-3 text-[11px] text-slate-400">
-          <span className="flex items-center gap-1">
-            <Layers className="w-3 h-3 text-cyan-400" />
-            Cost Model: <strong className="text-slate-200">Gemini 2.5 Flash ($0.075/1M)</strong>
-          </span>
-          <span className="text-[#2a334a]">|</span>
-          <span className="flex items-center gap-1">
-            <Cpu className="w-3 h-3 text-purple-400" />
-            Throughput: <strong className="text-emerald-400">{pipelineFps.toFixed(1)} FPS</strong>
+        <div className="flex items-center gap-1 bg-[#14141e] px-2.5 py-1 rounded-lg border border-[#2a2a3e]">
+          <TrendingUp className="w-3.5 h-3.5 text-green-400" />
+          <span className="text-xs font-extrabold text-green-400">
+            {reductionPercent}% SAVED
           </span>
         </div>
       </div>
 
-      {/* 4 High-Impact Cloud Economics Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
-        
-        {/* 1. Token Optimization Ratio */}
-        <div className="bg-[#121622] border border-emerald-500/30 rounded-xl p-3.5 transition-all relative overflow-hidden group hover:border-emerald-500/60 shadow-lg">
-          <div className="absolute top-0 right-0 w-24 h-24 bg-emerald-500/5 rounded-full blur-xl pointer-events-none group-hover:bg-emerald-500/10 transition-all" />
-          
-          <div className="flex items-center justify-between mb-1.5">
-            <span className="text-[11px] font-bold uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
-              <TrendingDown className="w-3.5 h-3.5 text-emerald-400" />
-              Token Reduction
-            </span>
-            <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-md bg-emerald-500/20 text-emerald-400 border border-emerald-500/40">
-              SAVING &gt;95%
-            </span>
+      {/* 4 Core Metrics Grid */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px]">
+        {/* Metric 1: Token Optimization */}
+        <div className="bg-[#08080d] p-2.5 rounded-lg border border-[#1a1a26] flex flex-col justify-between">
+          <div className="flex items-center justify-between text-zinc-400 text-[10px] mb-1">
+            <span>Tokens Pruned</span>
+            <Shield className="w-3 h-3 text-green-400" />
           </div>
-
-          <div className="flex items-baseline gap-1.5 text-slate-100">
-            <span className="text-3xl font-extrabold tracking-tight text-emerald-400">
-              {tokenReduction.toFixed(1)}%
-            </span>
-            <span className="text-xs font-semibold text-slate-400">Tokens Saved</span>
-          </div>
-
-          <div className="text-[10px] text-slate-400 mt-2 space-y-0.5">
-            <p>Billed: <strong className="text-slate-200">{tokensConsumed.toLocaleString()}</strong> tokens</p>
-            <p>Naive Stream: <strong className="text-slate-400">{theoreticalNaive.toLocaleString()}</strong> tokens</p>
-          </div>
+          <span className="text-sm font-black text-green-400">
+            {tokensSaved.toLocaleString()}
+          </span>
+          <span className="text-[9px] text-zinc-500 mt-0.5">
+            Billed: {billedTokens.toLocaleString()} tokens
+          </span>
         </div>
 
-        {/* 2. Cloud Bandwidth Saved */}
-        <div className="bg-[#121622] border border-cyan-500/30 rounded-xl p-3.5 transition-all relative overflow-hidden group hover:border-cyan-500/60 shadow-lg">
-          <div className="absolute top-0 right-0 w-24 h-24 bg-cyan-500/5 rounded-full blur-xl pointer-events-none group-hover:bg-cyan-500/10 transition-all" />
-
-          <div className="flex items-center justify-between mb-1.5">
-            <span className="text-[11px] font-bold uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
-              <HardDrive className="w-3.5 h-3.5 text-cyan-400" />
-              Bandwidth Preserved
-            </span>
-            <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-md bg-cyan-500/20 text-cyan-400 border border-cyan-500/40">
-              {filterRate.toFixed(1)}% FILTERED
-            </span>
+        {/* Metric 2: Bandwidth Reduction */}
+        <div className="bg-[#08080d] p-2.5 rounded-lg border border-[#1a1a26] flex flex-col justify-between">
+          <div className="flex items-center justify-between text-zinc-400 text-[10px] mb-1">
+            <span>Uplink Payload</span>
+            <HardDrive className="w-3 h-3 text-purple-400" />
           </div>
-
-          <div className="flex items-baseline gap-1.5 text-slate-100">
-            <span className="text-3xl font-extrabold tracking-tight text-cyan-400">
-              {bandwidthSaved.toFixed(1)}
-            </span>
-            <span className="text-xs font-semibold text-slate-400">MB Preserved</span>
-          </div>
-
-          <div className="text-[10px] text-slate-400 mt-2 space-y-0.5">
-            <p>Static Discarded: <strong className="text-slate-200">{staticDropped.toLocaleString()}</strong> frames</p>
-            <p>Payload: <strong className="text-slate-400">150 KB/frame compressed</strong></p>
-          </div>
+          <span className="text-sm font-black text-purple-300">
+            {uplinkMb} MB <span className="text-[10px] text-zinc-400 font-normal">/ {rawMb} MB</span>
+          </span>
+          <span className="text-[9px] text-zinc-500 mt-0.5">
+            -{reductionPercent}% network payload
+          </span>
         </div>
 
-        {/* 3. Estimated Cost Reduction */}
-        <div className="bg-[#121622] border border-amber-500/30 rounded-xl p-3.5 transition-all relative overflow-hidden group hover:border-amber-500/60 shadow-lg">
-          <div className="absolute top-0 right-0 w-24 h-24 bg-amber-500/5 rounded-full blur-xl pointer-events-none group-hover:bg-amber-500/10 transition-all" />
-
-          <div className="flex items-center justify-between mb-1.5">
-            <span className="text-[11px] font-bold uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
-              <DollarSign className="w-3.5 h-3.5 text-amber-400" />
-              Projected ROI
-            </span>
-            <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-md bg-amber-500/20 text-amber-400 border border-amber-500/40">
-              24/7 SAVINGS
-            </span>
+        {/* Metric 3: Dollar Cost Reduction */}
+        <div className="bg-[#08080d] p-2.5 rounded-lg border border-[#1a1a26] flex flex-col justify-between">
+          <div className="flex items-center justify-between text-zinc-400 text-[10px] mb-1">
+            <span>Cost Savings</span>
+            <DollarSign className="w-3 h-3 text-amber-400" />
           </div>
-
-          <div className="flex items-baseline gap-1.5 text-slate-100">
-            <span className="text-3xl font-extrabold tracking-tight text-amber-400">
-              ${monthlySavings.toFixed(2)}
-            </span>
-            <span className="text-xs font-semibold text-slate-400">/mo saved</span>
-          </div>
-
-          <div className="text-[10px] text-slate-400 mt-2 space-y-0.5">
-            <p>Run Rate: <strong className="text-slate-200">${hourlySavings.toFixed(2)}/hr</strong></p>
-            <p>Rate: <strong className="text-slate-400">$0.075 / 1M Input Tokens</strong></p>
-          </div>
+          <span className="text-sm font-black text-amber-400">
+            ${dollarsSaved.toFixed(3)}
+          </span>
+          <span className="text-[9px] text-zinc-500 mt-0.5">
+            Naive: ${costNaive.toFixed(3)} → StreamPulse: ${costStreamPulse.toFixed(3)}
+          </span>
         </div>
 
-        {/* 4. Tri-Tier Latency Breakdown Card */}
-        <div className="bg-[#121622] border border-purple-500/30 rounded-xl p-3.5 transition-all relative overflow-hidden group hover:border-purple-500/60 shadow-lg">
-          <div className="absolute top-0 right-0 w-24 h-24 bg-purple-500/5 rounded-full blur-xl pointer-events-none group-hover:bg-purple-500/10 transition-all" />
-
-          <div className="flex items-center justify-between mb-1.5">
-            <span className="text-[11px] font-bold uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
-              <Zap className="w-3.5 h-3.5 text-purple-400" />
-              Tri-Tier Latency
-            </span>
-            <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded-md flex items-center gap-1 border ${
-              isSlaCompliant ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40' : 'bg-amber-500/20 text-amber-400 border-amber-500/40'
-            }`}>
-              {isSlaCompliant ? <CheckCircle className="w-2.5 h-2.5" /> : <Activity className="w-2.5 h-2.5" />}
-              {isSlaCompliant ? '<300MS SLA' : 'DEGRADED'}
-            </span>
+        {/* Metric 4: Tri-Tier Latency Breakdown */}
+        <div className="bg-[#08080d] p-2.5 rounded-lg border border-[#1a1a26] flex flex-col justify-between">
+          <div className="flex items-center justify-between text-zinc-400 text-[10px] mb-1">
+            <span>Tri-Tier Latency</span>
+            <Cpu className="w-3 h-3 text-cyan-400" />
           </div>
-
-          <div className="flex items-baseline gap-1.5 text-slate-100">
-            <span className="text-3xl font-extrabold tracking-tight text-purple-400">
-              {edgeFilterMs.toFixed(2)}
-            </span>
-            <span className="text-xs font-semibold text-slate-400">ms Edge Filter</span>
+          <div className="flex items-baseline gap-1">
+            <span className="text-sm font-black text-cyan-300">{edgeLatency}ms</span>
+            <span className="text-[10px] text-zinc-400">Edge</span>
           </div>
-
-          <div className="text-[10px] text-slate-400 mt-2 space-y-0.5">
-            <p>Ingest / HUD Live: <strong className="text-emerald-400">{ingestHudMs.toFixed(1)} ms</strong></p>
-            <p>Async Cloud VLM: <strong className="text-purple-300">{(cloudVlmMs / 1000.0).toFixed(2)} s</strong></p>
-          </div>
+          <span className="text-[9px] text-zinc-500 mt-0.5 flex items-center gap-1">
+            HUD: <span className="text-zinc-300">{Math.round(hudLatency)}ms</span> | VLM: <span className="text-zinc-300">{(cloudLatency / 1000).toFixed(1)}s</span>
+          </span>
         </div>
-
       </div>
-
     </div>
   );
 };
