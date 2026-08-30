@@ -1,7 +1,6 @@
 import React from 'react';
 import {
   Activity,
-  Cpu,
   Layers,
   Camera,
   Maximize2,
@@ -15,6 +14,8 @@ interface NavbarProps {
   isFailsafeActive: boolean;
   activeFeedName: string;
   isFullscreen: boolean;
+  viewMode?: 'single' | 'quad';
+  onToggleViewMode?: (mode: 'single' | 'quad') => void;
   onToggleFullscreen: () => void;
   onTakeSnapshot: () => void;
   onOpenSettings: () => void;
@@ -25,6 +26,8 @@ export const Navbar: React.FC<NavbarProps> = ({
   isFailsafeActive,
   activeFeedName,
   isFullscreen,
+  viewMode = 'single',
+  onToggleViewMode,
   onToggleFullscreen,
   onTakeSnapshot,
   onOpenSettings,
@@ -73,28 +76,43 @@ export const Navbar: React.FC<NavbarProps> = ({
               </div>
             )}
           </div>
-        </div>
 
-        {/* Cluster Status Badges */}
-        <div className="hidden xl:flex items-center gap-3">
-          <div className="flex items-center gap-2 bg-[#141824] border border-[#222a3d] px-3 py-1.5 rounded-lg text-xs font-mono text-slate-300">
-            <Cpu className="w-3.5 h-3.5 text-cyan-400" />
-            <span className="text-slate-400">Engine:</span>
-            <span className="text-cyan-300 font-semibold">YOLOv8n (CPU Opt)</span>
-          </div>
-
-          <div className="flex items-center gap-2 bg-[#141824] border border-[#222a3d] px-3 py-1.5 rounded-lg text-xs font-mono text-slate-300">
-            <Layers className="w-3.5 h-3.5 text-amber-400" />
-            <span className="text-slate-400">Queue:</span>
-            <span className="text-amber-300 font-semibold">Redis Streams (0 Backlog)</span>
-          </div>
-
-          <div className="flex items-center gap-2 bg-[#141824] border border-[#222a3d] px-3 py-1.5 rounded-lg text-xs font-mono text-slate-300">
+          {/* Active Camera Feed Name Pill */}
+          <div className="hidden lg:flex items-center gap-2 bg-[#141824] border border-[#222a3d] px-3 py-1 rounded-lg text-xs font-mono text-slate-300">
             <Radio className="w-3.5 h-3.5 text-emerald-400" />
             <span className="text-slate-400">Feed:</span>
             <span className="text-emerald-300 font-semibold">{activeFeedName}</span>
           </div>
         </div>
+
+        {/* View Mode Grid Switcher */}
+        {onToggleViewMode && (
+          <div className="flex items-center gap-1 bg-[#141824] p-1 rounded-xl border border-[#222a3d] text-xs font-mono">
+            <button
+              onClick={() => onToggleViewMode('single')}
+              className={`px-3 py-1 rounded-lg transition-all font-bold flex items-center gap-1.5 ${
+                viewMode === 'single'
+                  ? 'bg-emerald-500 text-black shadow-sm'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              <Radio className="w-3.5 h-3.5" />
+              <span>Single Feed</span>
+            </button>
+
+            <button
+              onClick={() => onToggleViewMode('quad')}
+              className={`px-3 py-1 rounded-lg transition-all font-bold flex items-center gap-1.5 ${
+                viewMode === 'quad'
+                  ? 'bg-purple-600 text-white shadow-sm'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              <Layers className="w-3.5 h-3.5" />
+              <span>2x2 Quad Grid</span>
+            </button>
+          </div>
+        )}
 
         {/* Action Buttons */}
         <div className="flex items-center gap-2.5">

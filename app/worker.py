@@ -614,6 +614,26 @@ class MLInferenceWorker:
                 temporal_keyframes=temporal_keyframes,
             )
 
+            # Record in Cross-Camera Correlation Engine
+            try:
+                from app.cross_camera_aggregator import cross_camera_aggregator
+                correlated = cross_camera_aggregator.record_incident(
+                    stream_id=stream_id,
+                    title=vlm_result.title if vlm_result else anomaly_summary,
+                    description=vlm_result.description if vlm_result else anomaly_rationale,
+                    severity=severity,
+                    category=vlm_result.category.value if vlm_result else "ANOMALY",
+                    entities=vlm_result.entities_involved if vlm_result else [d.label for d in detections],
+                    action=vlm_result.recommended_action if vlm_result else "Verify on camera feed.",
+                    timestamp=t_client,
+                )
+                if correlated:
+                    asyncio.create_task(
+                        redis_manager.publish_telemetry("global", correlated.model_dump())
+                    )
+            except Exception as e:
+                logger.warning(f"Cross-camera aggregator recording error: {e}")
+
             asyncio.create_task(
                 redis_manager.log_forensic_incident(
                     stream_id=stream_id,

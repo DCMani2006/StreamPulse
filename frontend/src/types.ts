@@ -268,3 +268,33 @@ export interface PresetScenario {
   zone: [number, number, number, number];
   tags: string[];
 }
+
+export interface CorrelatedProgressionStep {
+  time: string;
+  stream_id: string;
+  camera_name: string;
+  event: string;
+  severity: string;
+}
+
+export interface CorrelatedMultiCameraIncident {
+  type: 'CORRELATED_INCIDENT';
+  correlation_id: string;
+  timestamp: number;
+  timestamp_utc: string;
+  streams_involved: string[];
+  title: string;
+  progression: CorrelatedProgressionStep[];
+  severity: 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW';
+  entities_involved: string[];
+  recommended_action: string;
+}
+
+export interface CameraGridTileConfig {
+  stream_id: string;
+  name: string;
+  location: string;
+  category: IncidentCategory;
+  defaultVideoUrl?: string;
+  colorTheme: string;
+}

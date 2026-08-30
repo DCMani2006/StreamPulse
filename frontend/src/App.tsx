@@ -3,6 +3,8 @@ import { Navbar } from './components/Navbar';
 import { CloudRoiBar } from './components/CloudRoiBar';
 import { PresetSelector } from './components/PresetSelector';
 import { VideoStage } from './components/VideoStage';
+import { MultiCameraGrid } from './components/MultiCameraGrid';
+import { GlobalIncidentTimeline } from './components/GlobalIncidentTimeline';
 import { TelemetryKPIs } from './components/TelemetryKPIs';
 import { LatencyChart } from './components/LatencyChart';
 import { AudioVisualizer } from './components/AudioVisualizer';
@@ -11,9 +13,11 @@ import { useStreamPulse } from './hooks/useStreamPulse';
 import { IncidentCategory } from './types';
 
 export const App: React.FC = () => {
-  const [streamId] = useState<string>('cam_01');
+  const [streamId, setStreamId] = useState<string>('cam_01');
   const [confidenceThreshold, setConfidenceThreshold] = useState<number>(0.35);
   const [activePreset, setActivePreset] = useState<IncidentCategory>('TRAFFIC');
+  const [viewMode, setViewMode] = useState<'single' | 'quad'>('single');
+  const [activeFeedTab, setActiveFeedTab] = useState<'dossiers' | 'correlation'>('dossiers');
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
@@ -71,6 +75,13 @@ export const App: React.FC = () => {
     triggerToast(`Domain Context Switched to ${preset} for Gemini 2.5 Flash`);
   };
 
+  const handleSelectCameraFromGrid = (selectedId: string, category: IncidentCategory) => {
+    setStreamId(selectedId);
+    handlePresetChange(category);
+    setViewMode('single');
+    triggerToast(`Focused on ${selectedId.toUpperCase()} (${category})`);
+  };
+
   return (
     <div className="min-h-screen bg-[#08090e] text-slate-100 flex flex-col font-sans selection:bg-emerald-500 selection:text-black">
       
@@ -78,8 +89,10 @@ export const App: React.FC = () => {
       <Navbar
         isBackendConnected={isBackendConnected}
         isFailsafeActive={!isBackendConnected}
-        activeFeedName={`CAM-01 (${streamSource.toUpperCase()})`}
+        activeFeedName={`${streamId.toUpperCase()} (${streamSource.toUpperCase()})`}
         isFullscreen={isFullscreen}
+        viewMode={viewMode}
+        onToggleViewMode={setViewMode}
         onToggleFullscreen={handleToggleFullscreen}
         onTakeSnapshot={handleSnapshotClick}
         onOpenSettings={() => triggerToast('Edge Gatekeeper Running in Sub-2ms Fast-Path Mode')}
@@ -105,29 +118,37 @@ export const App: React.FC = () => {
         {/* 3. Main Operational Grid */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 flex-1">
           
-          {/* Left Column: Live Video + KPIs + Latency Timeline (8 cols) */}
+          {/* Left Column: Live Video or 2x2 Multi-Camera Grid (8 cols) */}
           <div className="lg:col-span-8 flex flex-col gap-5">
             
-            {/* Live Video Stage & Dynamic Canvas HUD Overlay */}
-            <VideoStage
-              videoRef={videoRef}
-              overlayCanvasRef={overlayCanvasRef}
-              streamSource={streamSource}
-              setStreamSource={setStreamSource}
-              loadVideoFile={loadVideoFile}
-              loadVideoUrl={loadVideoUrl}
-              loadPresetScenario={loadPresetScenario}
-              startWebcam={startWebcam}
-              latestTelemetry={latestTelemetry}
-              currentFps={currentFps}
-              cameraActive={cameraActive}
-              cameraError={cameraError}
-              confidenceThreshold={confidenceThreshold}
-              setConfidenceThreshold={setConfidenceThreshold}
-              streamId={streamId}
-              isBackendConnected={isBackendConnected}
-              onTakeSnapshot={handleSnapshotClick}
-            />
+            {viewMode === 'quad' ? (
+              <MultiCameraGrid
+                onSelectCamera={handleSelectCameraFromGrid}
+                onTriggerSimulatedAnomaly={(camId, title) => {
+                  triggerToast(`Simulated Event on ${camId.toUpperCase()}: ${title}`);
+                }}
+              />
+            ) : (
+              <VideoStage
+                videoRef={videoRef}
+                overlayCanvasRef={overlayCanvasRef}
+                streamSource={streamSource}
+                setStreamSource={setStreamSource}
+                loadVideoFile={loadVideoFile}
+                loadVideoUrl={loadVideoUrl}
+                loadPresetScenario={loadPresetScenario}
+                startWebcam={startWebcam}
+                latestTelemetry={latestTelemetry}
+                currentFps={currentFps}
+                cameraActive={cameraActive}
+                cameraError={cameraError}
+                confidenceThreshold={confidenceThreshold}
+                setConfidenceThreshold={setConfidenceThreshold}
+                streamId={streamId}
+                isBackendConnected={isBackendConnected}
+                onTakeSnapshot={handleSnapshotClick}
+              />
+            )}
 
             {/* Pipeline Latency Breakdowns */}
             <TelemetryKPIs latency={latestTelemetry?.latency} />
@@ -137,7 +158,7 @@ export const App: React.FC = () => {
 
           </div>
 
-          {/* Right Column: Audio VAD & Cloud VLM Incident Feed (4 cols) */}
+          {/* Right Column: Audio VAD & Cloud VLM Dossiers + Cross-Stream Correlation (4 cols) */}
           <div className="lg:col-span-4 flex flex-col gap-5">
             
             {/* Audio Energy & Acoustic Transient Spike Monitor */}
@@ -147,9 +168,37 @@ export const App: React.FC = () => {
               audioAnalysis={latestTelemetry?.audio_analysis}
             />
 
-            {/* Live Gemini Multimodal Incident Dossier Feed */}
+            {/* Tab Selector for Single Feed Dossiers vs Cross-Stream Correlation */}
+            <div className="flex items-center gap-1 bg-[#0e111a] p-1 rounded-xl border border-[#1c2233] text-xs font-mono">
+              <button
+                onClick={() => setActiveFeedTab('dossiers')}
+                className={`flex-1 py-1.5 rounded-lg transition-all font-bold text-center ${
+                  activeFeedTab === 'dossiers'
+                    ? 'bg-emerald-500 text-black shadow-sm'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                VLM Dossiers
+              </button>
+              <button
+                onClick={() => setActiveFeedTab('correlation')}
+                className={`flex-1 py-1.5 rounded-lg transition-all font-bold text-center ${
+                  activeFeedTab === 'correlation'
+                    ? 'bg-purple-600 text-white shadow-sm'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                Cross-Camera Chains
+              </button>
+            </div>
+
+            {/* Feed Component Switcher */}
             <div className="flex-1 min-h-[550px]">
-              <IncidentFeed incidents={incidents} />
+              {activeFeedTab === 'dossiers' ? (
+                <IncidentFeed incidents={incidents} />
+              ) : (
+                <GlobalIncidentTimeline />
+              )}
             </div>
 
           </div>

@@ -477,4 +477,23 @@ async def get_benchmark_summary_endpoint():
     }
 
 
+# -----------------------------------------------------------------------------
+# Cross-Stream Multi-Camera Correlation & Event Timeline Endpoints
+# -----------------------------------------------------------------------------
+
+@app.get("/api/v1/incidents/correlated", tags=["Cross-Camera Correlation"])
+async def get_correlated_incidents_endpoint(limit: int = Query(20, ge=1, le=100)):
+    """Retrieves synthesized multi-camera correlated incidents across surveillance streams."""
+    from app.cross_camera_aggregator import cross_camera_aggregator
+    return cross_camera_aggregator.get_correlated_history(limit=limit)
+
+
+@app.get("/api/v1/timeline/unified", tags=["Cross-Camera Correlation"])
+async def get_unified_timeline_endpoint(limit: int = Query(50, ge=1, le=100)):
+    """Retrieves global chronological incident timeline combining all cameras and multi-point chains."""
+    from app.cross_camera_aggregator import cross_camera_aggregator
+    return cross_camera_aggregator.get_unified_timeline(limit=limit)
+
+
+
 
