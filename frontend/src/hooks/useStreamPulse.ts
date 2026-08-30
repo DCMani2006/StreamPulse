@@ -318,12 +318,43 @@ export function useStreamPulse({
 
       video.onerror = (err) => {
         console.error('Video decode error:', err);
-        setCameraError(`Failed to decode video file "${file.name}". Please ensure it is a valid MP4, WebM, or MOV file.`);
+        setCameraError(`Failed to decode video file "${file.name}". Please ensure it is a valid MP4, WebM, MOV, or MKV file.`);
         setCameraActive(false);
         setIsLoadingMedia(false);
       };
     }
   }, [stopWebcam]);
+
+  // Upload Large Video File Directly to FastAPI Backend Gateway (Streaming Chunked Ingest)
+  const uploadVideoToBackend = useCallback(
+    async (file: File) => {
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('stream_id', streamId);
+
+      const host = window.location.hostname || 'localhost';
+      const port = '8000';
+      const protocol = window.location.protocol === 'https:' ? 'https:' : 'http:';
+      const uploadUrl = `${protocol}//${host}:${port}/api/v1/video/upload`;
+
+      try {
+        const response = await fetch(uploadUrl, {
+          method: 'POST',
+          body: formData,
+        });
+        if (!response.ok) {
+          throw new Error(`Upload failed with HTTP status ${response.status}`);
+        }
+        const data = await response.json();
+        console.log('[StreamPulse] Large video uploaded to backend successfully:', data);
+        return data;
+      } catch (err) {
+        console.error('Error uploading large video to backend:', err);
+        throw err;
+      }
+    },
+    [streamId]
+  );
 
   // Load Video from Direct URL
   const loadVideoUrl = useCallback((url: string) => {
@@ -922,6 +953,7 @@ export function useStreamPulse({
     customVideoUrl,
     loadVideoFile,
     loadVideoUrl,
+    uploadVideoToBackend,
     loadPresetScenario,
     isBackendConnected,
     currentFps,

@@ -15,6 +15,9 @@ import {
   Loader2,
   FileVideo,
   RefreshCw,
+  RotateCcw,
+  RotateCw,
+  HardDrive,
 } from 'lucide-react';
 import { StreamTelemetryPayload, StreamSourceType, PresetScenario } from '../types';
 import { LiveVisionCanvas } from './LiveVisionCanvas';
@@ -108,12 +111,14 @@ export const VideoStage: React.FC<VideoStageProps> = ({
   const [hudTime, setHudTime] = useState<string>('');
   const [activeTab, setActiveTab] = useState<'source' | 'upload' | 'url' | 'presets'>('source');
   const [urlInput, setUrlInput] = useState<string>('https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4');
-  const [selectedPresetId, setSelectedPresetId] = useState<string>('campus');
+  const [selectedPresetId, setSelectedPresetId] = useState<string>('traffic');
   const [isDragOver, setIsDragOver] = useState<boolean>(false);
   const [uploadedFileName, setUploadedFileName] = useState<string | null>(null);
+  const [uploadedFileSizeMb, setUploadedFileSizeMb] = useState<number | null>(null);
   const [isPlaying, setIsPlaying] = useState<boolean>(true);
   const [videoCurrentTime, setVideoCurrentTime] = useState<number>(0);
   const [videoDuration, setVideoDuration] = useState<number>(0);
+  const [playbackSpeed, setPlaybackSpeed] = useState<number>(1);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   // Live HUD Millisecond Clock
@@ -132,18 +137,22 @@ export const VideoStage: React.FC<VideoStageProps> = ({
     return () => clearInterval(timer);
   }, []);
 
-  // Video Time Update Listener for Smooth Scrubbing
+  // Video Time Update Listener for Smooth Scrubbing & Hours Support
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
 
     const onTimeUpdate = () => {
       setVideoCurrentTime(video.currentTime || 0);
-      setVideoDuration(video.duration || 0);
+      if (video.duration && !isNaN(video.duration) && isFinite(video.duration)) {
+        setVideoDuration(video.duration);
+      }
     };
 
     const onLoadedMetadata = () => {
-      setVideoDuration(video.duration || 0);
+      if (video.duration && !isNaN(video.duration) && isFinite(video.duration)) {
+        setVideoDuration(video.duration);
+      }
     };
 
     video.addEventListener('timeupdate', onTimeUpdate);
@@ -155,11 +164,17 @@ export const VideoStage: React.FC<VideoStageProps> = ({
     };
   }, [videoRef, streamSource]);
 
+  // Robust Formatter with Hours Support for Multi-Hour Surveillance Videos
   const formatSec = (sec: number) => {
     if (isNaN(sec) || sec < 0) return '00:00';
-    const m = Math.floor(sec / 60);
-    const s = Math.floor(sec % 60);
-    return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+    const totalSec = Math.floor(sec);
+    const hours = Math.floor(totalSec / 3600);
+    const minutes = Math.floor((totalSec % 3600) / 60);
+    const seconds = totalSec % 60;
+    if (hours > 0) {
+      return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+    }
+    return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
   };
 
   const handleSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -170,6 +185,22 @@ export const VideoStage: React.FC<VideoStageProps> = ({
     setVideoCurrentTime(target);
   };
 
+  const handleJump = (deltaSec: number) => {
+    const video = videoRef.current;
+    if (!video) return;
+    const newTime = Math.max(0, Math.min(video.duration || 0, (video.currentTime || 0) + deltaSec));
+    video.currentTime = newTime;
+    setVideoCurrentTime(newTime);
+  };
+
+  const handleSpeedChange = (speed: number) => {
+    const video = videoRef.current;
+    if (video) {
+      video.playbackRate = speed;
+    }
+    setPlaybackSpeed(speed);
+  };
+
   const handleFileDrop = (e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
@@ -177,6 +208,7 @@ export const VideoStage: React.FC<VideoStageProps> = ({
     if (e.dataTransfer.files && e.dataTransfer.files[0]) {
       const file = e.dataTransfer.files[0];
       setUploadedFileName(file.name);
+      setUploadedFileSizeMb(roundNum(file.size / (1024 * 1024), 1));
       loadVideoFile(file);
       setIsPlaying(true);
     }
@@ -186,6 +218,7 @@ export const VideoStage: React.FC<VideoStageProps> = ({
     if (e.target.files && e.target.files[0]) {
       const file = e.target.files[0];
       setUploadedFileName(file.name);
+      setUploadedFileSizeMb(roundNum(file.size / (1024 * 1024), 1));
       loadVideoFile(file);
       setIsPlaying(true);
       e.target.value = '';
@@ -217,6 +250,11 @@ export const VideoStage: React.FC<VideoStageProps> = ({
     setIsPlaying(true);
   };
 
+  const roundNum = (val: number, decimals: number) => {
+    const factor = Math.pow(10, decimals);
+    return Math.round(val * factor) / factor;
+  };
+
   const isTriggerFired = Boolean(
     latestTelemetry?.trigger_fired ||
     (latestTelemetry?.alerts && latestTelemetry.alerts.length > 0) ||
@@ -229,7 +267,7 @@ export const VideoStage: React.FC<VideoStageProps> = ({
       {/* Video Container Stage */}
       <div className={`relative bg-[#07090e] border ${
         isTriggerFired
-          ? 'border-amber-400 ring-4 ring-amber-500/30 shadow-2xl shadow-amber-500/20'
+          ? 'border-red-500 ring-4 ring-red-500/30 shadow-2xl shadow-red-500/20'
           : 'border-[#1c2233]'
       } rounded-2xl overflow-hidden shadow-2xl aspect-[16/9] flex items-center justify-center transition-all duration-200 group`}>
         
@@ -447,30 +485,49 @@ export const VideoStage: React.FC<VideoStageProps> = ({
             <input
               ref={fileInputRef}
               type="file"
-              accept="video/*,.mp4,.webm,.mov,.mkv,.avi"
+              accept="video/*,.mp4,.webm,.mov,.mkv,.avi,.m4v,.ts,.flv,.wmv"
               onChange={handleFileSelect}
               className="hidden"
             />
 
             {uploadedFileName && streamSource === 'file' ? (
-              <div className="bg-[#121520] border border-[#262f45] rounded-xl p-3 flex flex-col gap-2.5">
+              <div className="bg-[#121520] border border-[#262f45] rounded-xl p-3.5 flex flex-col gap-3">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div className="flex items-center gap-2.5">
                     <div className="p-2 rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                      <FileVideo className="w-4 h-4" />
+                      <FileVideo className="w-5 h-5" />
                     </div>
                     <div>
-                      <h4 className="text-xs font-bold text-slate-200 truncate max-w-xs sm:max-w-md">
-                        {uploadedFileName}
-                      </h4>
-                      <span className="text-[10px] text-emerald-400 font-semibold flex items-center gap-1">
+                      <div className="flex items-center gap-2">
+                        <h4 className="text-xs font-bold text-slate-200 truncate max-w-xs sm:max-w-md">
+                          {uploadedFileName}
+                        </h4>
+                        {uploadedFileSizeMb && (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-[#1c2233] text-cyan-300 font-semibold border border-[#2a334a] flex items-center gap-1">
+                            <HardDrive className="w-2.5 h-2.5" />
+                            {uploadedFileSizeMb} MB
+                          </span>
+                        )}
+                      </div>
+                      <span className="text-[10px] text-emerald-400 font-semibold flex items-center gap-1 mt-0.5">
                         <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
-                        Chunked Ingestion Active (Streaming at 15–30 FPS)
+                        Chunked Ingestion Active ({videoDuration > 0 ? `Duration: ${formatSec(videoDuration)}` : 'Streaming Footage'})
                       </span>
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {/* Jump Back 10s */}
+                    <button
+                      onClick={() => handleJump(-10)}
+                      title="Jump Back 10s"
+                      className="bg-[#181d2e] hover:bg-[#222a3d] text-slate-300 border border-[#2e374f] px-2.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1 transition-all"
+                    >
+                      <RotateCcw className="w-3.5 h-3.5" />
+                      <span>-10s</span>
+                    </button>
+
+                    {/* Play/Pause */}
                     <button
                       onClick={togglePlayback}
                       className="bg-[#181d2e] hover:bg-[#222a3d] text-slate-200 border border-[#2e374f] px-3 py-1.5 rounded-lg font-semibold flex items-center gap-1.5 transition-all text-xs"
@@ -478,6 +535,33 @@ export const VideoStage: React.FC<VideoStageProps> = ({
                       {isPlaying ? <Pause className="w-3.5 h-3.5 text-amber-400" /> : <Play className="w-3.5 h-3.5 text-emerald-400 fill-current" />}
                       <span>{isPlaying ? 'Pause' : 'Play'}</span>
                     </button>
+
+                    {/* Jump Forward 10s */}
+                    <button
+                      onClick={() => handleJump(10)}
+                      title="Jump Forward 10s"
+                      className="bg-[#181d2e] hover:bg-[#222a3d] text-slate-300 border border-[#2e374f] px-2.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1 transition-all"
+                    >
+                      <RotateCw className="w-3.5 h-3.5" />
+                      <span>+10s</span>
+                    </button>
+
+                    {/* Playback Speed Controls */}
+                    <div className="flex items-center bg-[#141824] rounded-lg border border-[#2e374f] p-0.5 text-[10px]">
+                      {[1, 2, 4, 8].map((spd) => (
+                        <button
+                          key={spd}
+                          onClick={() => handleSpeedChange(spd)}
+                          className={`px-2 py-1 rounded font-bold transition-all ${
+                            playbackSpeed === spd
+                              ? 'bg-emerald-500 text-black'
+                              : 'text-slate-400 hover:text-white'
+                          }`}
+                        >
+                          {spd}x
+                        </button>
+                      ))}
+                    </div>
 
                     <button
                       onClick={() => fileInputRef.current?.click()}
@@ -489,9 +573,9 @@ export const VideoStage: React.FC<VideoStageProps> = ({
                   </div>
                 </div>
 
-                {/* Video Playback Progress Scrubber Bar */}
+                {/* Video Playback Progress Scrubber Bar with HH:MM:SS */}
                 <div className="flex items-center gap-3 pt-1 border-t border-[#1a1f2e] text-[11px] text-slate-400">
-                  <span className="text-emerald-400 font-bold w-12 text-right">
+                  <span className="text-emerald-400 font-bold w-16 text-right font-mono">
                     {formatSec(videoCurrentTime)}
                   </span>
                   <input
@@ -503,7 +587,7 @@ export const VideoStage: React.FC<VideoStageProps> = ({
                     onChange={handleSeek}
                     className="flex-1 accent-emerald-500 cursor-pointer h-1.5 bg-slate-700 rounded-lg"
                   />
-                  <span className="text-slate-500 w-12">
+                  <span className="text-slate-500 w-16 font-mono">
                     {formatSec(videoDuration)}
                   </span>
                 </div>
@@ -530,10 +614,10 @@ export const VideoStage: React.FC<VideoStageProps> = ({
               >
                 <Upload className="w-8 h-8 text-emerald-400 mb-1" />
                 <p className="text-xs font-bold text-slate-200">
-                  Drag & Drop your video file here, or <span className="text-emerald-400 underline">Browse Local Files</span>
+                  Drag & Drop lengthy video file here, or <span className="text-emerald-400 underline">Browse Local Files</span>
                 </p>
-                <span className="text-[10px] text-slate-500">
-                  Supports MP4, WebM, QuickTime MOV, MKV up to 4K resolution.
+                <span className="text-[10px] text-slate-400">
+                  Supports lengthy surveillance footage (MP4, MKV, WebM, MOV, AVI) up to multi-hour & 4K streams.
                 </span>
               </div>
             )}

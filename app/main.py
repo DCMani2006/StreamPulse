@@ -2,18 +2,24 @@ import asyncio
 from contextlib import asynccontextmanager
 import json
 import logging
+import os
 import time
 from typing import Any, Dict, List, Optional
 from fastapi import (
     FastAPI,
+    File,
+    Form,
     HTTPException,
     Query,
+    UploadFile,
     WebSocket,
     WebSocketDisconnect,
     status,
 )
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field
 import psutil
 
 from app.config import settings
@@ -43,6 +49,10 @@ logger = logging.getLogger("streampulse.api")
 
 APP_START_TIME = time.time()
 stream_sequence_counters: Dict[str, int] = {}
+
+# Ensure uploads directory exists
+UPLOAD_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "uploads")
+os.makedirs(UPLOAD_DIR, exist_ok=True)
 embedded_worker_instance = None
 embedded_worker_task = None
 telemetry_broadcast_task = None
@@ -110,6 +120,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Mount uploads directory for static video file streaming
+app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 
 
 @app.get("/", tags=["System"])
@@ -248,6 +261,78 @@ async def rest_ingest_endpoint(payload: FrameIngestPayload):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to queue frame: {str(e)}",
+        )
+
+
+@app.post("/api/v1/video/upload", tags=["Ingestion"])
+async def upload_large_video_endpoint(
+    file: UploadFile = File(...),
+    stream_id: str = Form("uploaded_stream"),
+):
+    """
+    Streams large surveillance video uploads (multi-minute/multi-hour, up to multi-GB)
+    directly to disk in 1MB chunks without memory exhaustion.
+    Extracts duration, resolution, and fps metadata for immediate streaming.
+    """
+    os.makedirs(UPLOAD_DIR, exist_ok=True)
+    safe_filename = f"{int(time.time())}_{file.filename}"
+    file_path = os.path.join(UPLOAD_DIR, safe_filename)
+
+    total_bytes = 0
+    chunk_size = 1024 * 1024  # 1 MB streaming chunks
+
+    try:
+        with open(file_path, "wb") as buffer:
+            while True:
+                chunk = await file.read(chunk_size)
+                if not chunk:
+                    break
+                buffer.write(chunk)
+                total_bytes += len(chunk)
+
+        file_size_mb = round(total_bytes / (1024 * 1024), 2)
+        logger.info(f"Successfully saved large video upload: '{safe_filename}' ({file_size_mb} MB)")
+
+        # Inspect video metadata with OpenCV
+        duration_sec = 0.0
+        fps = 30.0
+        width, height = 1280, 720
+        total_frames = 0
+
+        try:
+            import cv2
+            cap = cv2.VideoCapture(file_path)
+            if cap.isOpened():
+                total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+                raw_fps = float(cap.get(cv2.CAP_PROP_FPS))
+                fps = raw_fps if raw_fps > 0 else 30.0
+                width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+                height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                if fps > 0 and total_frames > 0:
+                    duration_sec = round(total_frames / fps, 2)
+                cap.release()
+        except Exception as ex:
+            logger.warning(f"Could not read OpenCV video metadata: {ex}")
+
+        return {
+            "status": "uploaded",
+            "filename": file.filename,
+            "saved_filename": safe_filename,
+            "file_path": file_path,
+            "file_size_mb": file_size_mb,
+            "stream_id": stream_id,
+            "duration_sec": duration_sec,
+            "fps": fps,
+            "resolution": f"{width}x{height}",
+            "total_frames": total_frames,
+            "playback_url": f"/uploads/{safe_filename}",
+        }
+
+    except Exception as e:
+        logger.error(f"Error streaming large video upload: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to stream video upload: {str(e)}",
         )
 
 
