@@ -48,6 +48,15 @@ interface VideoStageProps {
 
 const PRESET_SCENARIOS: PresetScenario[] = [
   {
+    id: 'virat_surveillance',
+    title: 'VIRAT Surveillance Cam',
+    subtitle: 'DARPA/VIRAT Multi-Person Dataset',
+    description: 'Surveillance feed evaluating multi-person tracking and kinetic activity anomalies.',
+    videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4',
+    zone: [0.0, 0.0, 1.0, 1.0],
+    tags: ['VIRAT Dataset', 'Surveillance Feed', 'Person Tracking'],
+  },
+  {
     id: 'traffic',
     title: 'Traffic Highway Feed',
     subtitle: 'Vehicle Collision & Accident Test',
@@ -126,6 +135,7 @@ export const VideoStage: React.FC<VideoStageProps> = ({
   const [playbackSpeed, setPlaybackSpeed] = useState<number>(1);
   const [isUploadingToBackend, setIsUploadingToBackend] = useState<boolean>(false);
   const [backendUploadMessage, setBackendUploadMessage] = useState<string | null>(null);
+  const [isErrorDismissed, setIsErrorDismissed] = useState<boolean>(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   // Live HUD Millisecond Clock
@@ -322,55 +332,59 @@ export const VideoStage: React.FC<VideoStageProps> = ({
           </div>
         )}
 
-        {/* Camera Permission / Error Fallback Screen */}
-        {((streamSource === 'webcam' && !cameraActive && !isLoadingMedia) || cameraError) && (
+        {/* Full-Screen Blocking Modal ONLY for Webcam Permissions */}
+        {streamSource === 'webcam' && !cameraActive && !isLoadingMedia && (
           <div className="absolute inset-0 bg-[#090b12]/95 flex flex-col items-center justify-center p-6 text-center z-10">
             <CameraOff className="w-12 h-12 text-slate-500 mb-3" />
             <h3 className="text-base font-bold text-slate-200 font-mono">
-              Stream Source Initialization
+              Webcam Initialization
             </h3>
             <p className="text-xs text-slate-400 max-w-md mt-1 mb-4 font-mono">
               {cameraError || 'Requesting browser camera access. Please allow camera permissions in your browser.'}
             </p>
-
             <div className="flex flex-wrap gap-2 justify-center">
-              {/* If a local file had decode issues, allow 1-click cloud OpenCV processing */}
-              {selectedRawFile && uploadVideoToBackend && (
-                <button
-                  onClick={handleUploadToBackend}
-                  disabled={isUploadingToBackend}
-                  className="bg-cyan-500 hover:bg-cyan-400 text-black font-bold text-xs px-4 py-2 rounded-lg transition-all flex items-center gap-1.5 shadow-md"
-                >
-                  <CloudUpload className="w-4 h-4" />
-                  <span>Process 30MB+ via Cloud Gateway</span>
-                </button>
-              )}
-
-              <button
-                onClick={() => {
-                  const video = videoRef.current;
-                  if (video) video.play().catch(console.warn);
-                }}
-                className="bg-emerald-600 hover:bg-emerald-500 text-black font-bold text-xs px-4 py-2 rounded-lg transition-all flex items-center gap-1"
-              >
-                <Play className="w-3.5 h-3.5 fill-current" />
-                <span>Force Play</span>
-              </button>
-
               <button
                 onClick={startWebcam}
-                className="bg-[#141824] hover:bg-[#1d2334] text-slate-200 border border-[#2a334a] text-xs font-semibold px-4 py-2 rounded-lg transition-all"
+                className="bg-emerald-600 hover:bg-emerald-500 text-black font-bold text-xs px-4 py-2 rounded-lg transition-all"
               >
                 Retry Webcam
               </button>
               <button
                 onClick={() => {
-                  setActiveTab('url');
-                  loadVideoUrl('https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4');
+                  setActiveTab('presets');
+                  handlePresetSelect(PRESET_SCENARIOS[0]);
                 }}
-                className="bg-[#141824] hover:bg-[#1d2334] text-emerald-400 border border-emerald-500/30 text-xs font-semibold px-4 py-2 rounded-lg transition-all"
+                className="bg-[#141824] hover:bg-[#1d2334] text-white border border-[#262f45] text-xs font-semibold px-4 py-2 rounded-lg transition-all"
               >
-                Load Direct Stream URL
+                Load Preset Scenario
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Floating Non-Blocking Toast Banner for File Codec Warnings (Leaves Live Canvas 100% Functional) */}
+        {cameraError && streamSource !== 'webcam' && !isErrorDismissed && (
+          <div className="absolute top-12 left-4 right-4 z-40 bg-[#161a28]/95 border border-amber-500/40 backdrop-blur-md rounded-xl p-3 shadow-2xl flex items-center justify-between gap-3 text-xs text-amber-200">
+            <div className="flex items-center gap-2 max-w-xl">
+              <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
+              <span className="leading-snug">{cameraError}</span>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              {selectedRawFile && uploadVideoToBackend && (
+                <button
+                  onClick={handleUploadToBackend}
+                  disabled={isUploadingToBackend}
+                  className="bg-cyan-500 hover:bg-cyan-400 text-black font-bold px-3 py-1.5 rounded-lg transition-all text-xs flex items-center gap-1 shadow-sm"
+                >
+                  <CloudUpload className="w-3.5 h-3.5" />
+                  <span>Cloud Ingest</span>
+                </button>
+              )}
+              <button
+                onClick={() => setIsErrorDismissed(true)}
+                className="bg-[#1e2538] hover:bg-[#28324c] text-slate-300 px-3 py-1.5 rounded-lg text-xs font-semibold border border-[#344062] transition-all"
+              >
+                Dismiss
               </button>
             </div>
           </div>

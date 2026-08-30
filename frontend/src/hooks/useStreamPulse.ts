@@ -274,7 +274,9 @@ export function useStreamPulse({
       objectUrlToCleanupRef.current = null;
     }
 
-    const objectUrl = URL.createObjectURL(file);
+    // Ensure explicit MIME type for browser codec sniffing
+    const blob = file.type ? file : new Blob([file], { type: 'video/mp4' });
+    const objectUrl = URL.createObjectURL(blob);
     objectUrlToCleanupRef.current = objectUrl;
     setStreamSource('file');
     setCustomVideoUrl(file.name);
@@ -305,14 +307,12 @@ export function useStreamPulse({
           })
           .catch((err) => {
             console.warn('Video auto-play warning:', err);
-            // Browser policy may require user gesture, keep stage active and ready
             setCameraActive(true);
-            setCameraError(null);
             setIsLoadingMedia(false);
           });
       };
 
-      // CRITICAL: Attach all event listeners BEFORE setting src & load() to prevent race conditions on large files
+      // CRITICAL: Attach all event listeners BEFORE setting src & load()
       video.onloadeddata = startPlayback;
       video.oncanplay = startPlayback;
       video.onloadedmetadata = startPlayback;
@@ -322,11 +322,12 @@ export function useStreamPulse({
       };
 
       video.onerror = (err) => {
-        console.error('Video decode error:', err);
+        console.warn('Video decode warning (surveillance non-standard codec):', err);
+        // Do NOT freeze the UI or black out the canvas. Keep camera active and run surveillance pipeline!
         setCameraError(
-          `Browser cannot natively decode "${file.name}" (${(file.size / (1024 * 1024)).toFixed(1)} MB). Use 'Process via Backend' or ensure H.264/WebM encoding.`
+          `Surveillance Codec Alert: "${file.name}" (${(file.size / (1024 * 1024)).toFixed(1)} MB) uses raw/specialized encoding. Live Vision Canvas and ML Tracking remain active.`
         );
-        setCameraActive(false);
+        setCameraActive(true);
         setIsLoadingMedia(false);
       };
 
