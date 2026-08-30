@@ -277,6 +277,7 @@ export function useStreamPulse({
     const objectUrl = URL.createObjectURL(file);
     objectUrlToCleanupRef.current = objectUrl;
     setStreamSource('file');
+    setCustomVideoUrl(file.name);
 
     const video = videoRef.current;
     if (video) {
@@ -285,10 +286,11 @@ export function useStreamPulse({
       video.srcObject = null;
       video.muted = true;
       video.defaultMuted = true;
+      video.volume = 0;
       video.loop = true;
       video.playsInline = true;
-      video.src = objectUrl;
-      video.load();
+      video.setAttribute('muted', 'true');
+      video.setAttribute('playsinline', 'true');
 
       let isStarted = false;
       const startPlayback = () => {
@@ -303,11 +305,14 @@ export function useStreamPulse({
           })
           .catch((err) => {
             console.warn('Video auto-play warning:', err);
+            // Browser policy may require user gesture, keep stage active and ready
             setCameraActive(true);
+            setCameraError(null);
             setIsLoadingMedia(false);
           });
       };
 
+      // CRITICAL: Attach all event listeners BEFORE setting src & load() to prevent race conditions on large files
       video.onloadeddata = startPlayback;
       video.oncanplay = startPlayback;
       video.onloadedmetadata = startPlayback;
@@ -318,10 +323,15 @@ export function useStreamPulse({
 
       video.onerror = (err) => {
         console.error('Video decode error:', err);
-        setCameraError(`Failed to decode video file "${file.name}". Please ensure it is a valid MP4, WebM, MOV, or MKV file.`);
+        setCameraError(
+          `Browser cannot natively decode "${file.name}" (${(file.size / (1024 * 1024)).toFixed(1)} MB). Use 'Process via Backend' or ensure H.264/WebM encoding.`
+        );
         setCameraActive(false);
         setIsLoadingMedia(false);
       };
+
+      video.src = objectUrl;
+      video.load();
     }
   }, [stopWebcam]);
 

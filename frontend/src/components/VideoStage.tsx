@@ -18,6 +18,8 @@ import {
   RotateCcw,
   RotateCw,
   HardDrive,
+  CloudUpload,
+  Sparkles,
 } from 'lucide-react';
 import { StreamTelemetryPayload, StreamSourceType, PresetScenario } from '../types';
 import { LiveVisionCanvas } from './LiveVisionCanvas';
@@ -29,6 +31,7 @@ interface VideoStageProps {
   setStreamSource: (source: StreamSourceType) => void;
   loadVideoFile: (file: File) => void;
   loadVideoUrl: (url: string) => void;
+  uploadVideoToBackend?: (file: File) => Promise<any>;
   loadPresetScenario: (url: string) => void;
   startWebcam: () => void;
   latestTelemetry: StreamTelemetryPayload | null;
@@ -95,6 +98,7 @@ export const VideoStage: React.FC<VideoStageProps> = ({
   setStreamSource: _setStreamSource,
   loadVideoFile,
   loadVideoUrl,
+  uploadVideoToBackend,
   loadPresetScenario,
   startWebcam,
   latestTelemetry,
@@ -113,12 +117,15 @@ export const VideoStage: React.FC<VideoStageProps> = ({
   const [urlInput, setUrlInput] = useState<string>('https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4');
   const [selectedPresetId, setSelectedPresetId] = useState<string>('traffic');
   const [isDragOver, setIsDragOver] = useState<boolean>(false);
+  const [selectedRawFile, setSelectedRawFile] = useState<File | null>(null);
   const [uploadedFileName, setUploadedFileName] = useState<string | null>(null);
   const [uploadedFileSizeMb, setUploadedFileSizeMb] = useState<number | null>(null);
   const [isPlaying, setIsPlaying] = useState<boolean>(true);
   const [videoCurrentTime, setVideoCurrentTime] = useState<number>(0);
   const [videoDuration, setVideoDuration] = useState<number>(0);
   const [playbackSpeed, setPlaybackSpeed] = useState<number>(1);
+  const [isUploadingToBackend, setIsUploadingToBackend] = useState<boolean>(false);
+  const [backendUploadMessage, setBackendUploadMessage] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   // Live HUD Millisecond Clock
@@ -207,6 +214,7 @@ export const VideoStage: React.FC<VideoStageProps> = ({
     setIsDragOver(false);
     if (e.dataTransfer.files && e.dataTransfer.files[0]) {
       const file = e.dataTransfer.files[0];
+      setSelectedRawFile(file);
       setUploadedFileName(file.name);
       setUploadedFileSizeMb(roundNum(file.size / (1024 * 1024), 1));
       loadVideoFile(file);
@@ -217,11 +225,34 @@ export const VideoStage: React.FC<VideoStageProps> = ({
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
       const file = e.target.files[0];
+      setSelectedRawFile(file);
       setUploadedFileName(file.name);
       setUploadedFileSizeMb(roundNum(file.size / (1024 * 1024), 1));
       loadVideoFile(file);
       setIsPlaying(true);
       e.target.value = '';
+    }
+  };
+
+  const handleUploadToBackend = async () => {
+    if (!selectedRawFile || !uploadVideoToBackend) return;
+    try {
+      setIsUploadingToBackend(true);
+      setBackendUploadMessage(`Streaming ${uploadedFileSizeMb || 30} MB file to Cloud Gateway in chunks...`);
+      const result = await uploadVideoToBackend(selectedRawFile);
+      setBackendUploadMessage(`Uploaded successfully (${result.file_size_mb} MB, ${result.fps} FPS). Initializing feed...`);
+      
+      const host = window.location.hostname || 'localhost';
+      const port = '8000';
+      const protocol = window.location.protocol === 'https:' ? 'https:' : 'http:';
+      const fullPlaybackUrl = `${protocol}//${host}:${port}${result.playback_url}`;
+      
+      loadVideoUrl(fullPlaybackUrl);
+      setIsPlaying(true);
+    } catch (err: any) {
+      setBackendUploadMessage(`Cloud upload failed: ${err.message || 'Network error'}. Running local fallback.`);
+    } finally {
+      setIsUploadingToBackend(false);
     }
   };
 
@@ -282,10 +313,12 @@ export const VideoStage: React.FC<VideoStageProps> = ({
         />
 
         {/* Loading Spinner Indicator */}
-        {isLoadingMedia && (
-          <div className="absolute inset-0 bg-black/70 backdrop-blur-sm flex flex-col items-center justify-center gap-2 z-30">
-            <Loader2 className="w-8 h-8 text-emerald-400 animate-spin" />
-            <span className="text-xs text-emerald-400 font-bold">Loading Video Stream...</span>
+        {(isLoadingMedia || isUploadingToBackend) && (
+          <div className="absolute inset-0 bg-black/75 backdrop-blur-sm flex flex-col items-center justify-center gap-2 z-30">
+            <Loader2 className="w-9 h-9 text-emerald-400 animate-spin" />
+            <span className="text-xs text-emerald-400 font-bold">
+              {backendUploadMessage || 'Loading Large Video Stream...'}
+            </span>
           </div>
         )}
 
@@ -296,13 +329,37 @@ export const VideoStage: React.FC<VideoStageProps> = ({
             <h3 className="text-base font-bold text-slate-200 font-mono">
               Stream Source Initialization
             </h3>
-            <p className="text-xs text-slate-400 max-w-sm mt-1 mb-4 font-mono">
+            <p className="text-xs text-slate-400 max-w-md mt-1 mb-4 font-mono">
               {cameraError || 'Requesting browser camera access. Please allow camera permissions in your browser.'}
             </p>
+
             <div className="flex flex-wrap gap-2 justify-center">
+              {/* If a local file had decode issues, allow 1-click cloud OpenCV processing */}
+              {selectedRawFile && uploadVideoToBackend && (
+                <button
+                  onClick={handleUploadToBackend}
+                  disabled={isUploadingToBackend}
+                  className="bg-cyan-500 hover:bg-cyan-400 text-black font-bold text-xs px-4 py-2 rounded-lg transition-all flex items-center gap-1.5 shadow-md"
+                >
+                  <CloudUpload className="w-4 h-4" />
+                  <span>Process 30MB+ via Cloud Gateway</span>
+                </button>
+              )}
+
+              <button
+                onClick={() => {
+                  const video = videoRef.current;
+                  if (video) video.play().catch(console.warn);
+                }}
+                className="bg-emerald-600 hover:bg-emerald-500 text-black font-bold text-xs px-4 py-2 rounded-lg transition-all flex items-center gap-1"
+              >
+                <Play className="w-3.5 h-3.5 fill-current" />
+                <span>Force Play</span>
+              </button>
+
               <button
                 onClick={startWebcam}
-                className="bg-emerald-600 hover:bg-emerald-500 text-black font-bold text-xs px-4 py-2 rounded-lg transition-all"
+                className="bg-[#141824] hover:bg-[#1d2334] text-slate-200 border border-[#2a334a] text-xs font-semibold px-4 py-2 rounded-lg transition-all"
               >
                 Retry Webcam
               </button>
@@ -314,15 +371,6 @@ export const VideoStage: React.FC<VideoStageProps> = ({
                 className="bg-[#141824] hover:bg-[#1d2334] text-emerald-400 border border-emerald-500/30 text-xs font-semibold px-4 py-2 rounded-lg transition-all"
               >
                 Load Direct Stream URL
-              </button>
-              <button
-                onClick={() => {
-                  setActiveTab('presets');
-                  handlePresetSelect(PRESET_SCENARIOS[0]);
-                }}
-                className="bg-[#141824] hover:bg-[#1d2334] text-white border border-[#262f45] text-xs font-semibold px-4 py-2 rounded-lg transition-all"
-              >
-                Load Preset Scenario
               </button>
             </div>
           </div>
@@ -517,6 +565,19 @@ export const VideoStage: React.FC<VideoStageProps> = ({
                   </div>
 
                   <div className="flex items-center gap-2 flex-wrap">
+                    {/* Process via Cloud Gateway Button */}
+                    {selectedRawFile && uploadVideoToBackend && (
+                      <button
+                        onClick={handleUploadToBackend}
+                        disabled={isUploadingToBackend}
+                        title="Stream 30MB+ file directly through FastAPI/YOLOv8 Cloud Gateway"
+                        className="bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 px-2.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all"
+                      >
+                        <Sparkles className="w-3.5 h-3.5 text-cyan-400" />
+                        <span>Cloud OpenCV Ingest</span>
+                      </button>
+                    )}
+
                     {/* Jump Back 10s */}
                     <button
                       onClick={() => handleJump(-10)}
@@ -614,10 +675,10 @@ export const VideoStage: React.FC<VideoStageProps> = ({
               >
                 <Upload className="w-8 h-8 text-emerald-400 mb-1" />
                 <p className="text-xs font-bold text-slate-200">
-                  Drag & Drop lengthy video file here, or <span className="text-emerald-400 underline">Browse Local Files</span>
+                  Drag & Drop 30MB+ video file here, or <span className="text-emerald-400 underline">Browse Local Files</span>
                 </p>
                 <span className="text-[10px] text-slate-400">
-                  Supports lengthy surveillance footage (MP4, MKV, WebM, MOV, AVI) up to multi-hour & 4K streams.
+                  Supports lengthy surveillance footage (30,000 KB+ MP4, MKV, WebM, MOV, AVI) with browser streaming & cloud OpenCV ingest.
                 </span>
               </div>
             )}

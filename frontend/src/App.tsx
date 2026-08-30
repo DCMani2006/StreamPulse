@@ -28,6 +28,7 @@ export const App: React.FC = () => {
     setStreamSource,
     loadVideoFile,
     loadVideoUrl,
+    uploadVideoToBackend,
     loadPresetScenario,
     startWebcam,
     isBackendConnected,
@@ -136,6 +137,7 @@ export const App: React.FC = () => {
                 setStreamSource={setStreamSource}
                 loadVideoFile={loadVideoFile}
                 loadVideoUrl={loadVideoUrl}
+                uploadVideoToBackend={uploadVideoToBackend}
                 loadPresetScenario={loadPresetScenario}
                 startWebcam={startWebcam}
                 latestTelemetry={latestTelemetry}
