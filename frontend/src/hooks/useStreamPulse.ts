@@ -21,8 +21,10 @@ export function useStreamPulse({
   targetFps = 10,
   confidenceThreshold = 0.35,
 }: UseStreamPulseProps) {
-  const [streamSource, setStreamSource] = useState<StreamSourceType>('webcam');
-  const [customVideoUrl, setCustomVideoUrl] = useState<string>('');
+  const [streamSource, setStreamSource] = useState<StreamSourceType>('url');
+  const [customVideoUrl, setCustomVideoUrl] = useState<string>(
+    'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4'
+  );
   const [isBackendConnected, setIsBackendConnected] = useState<boolean>(false);
   const [currentFps, setCurrentFps] = useState<number>(0);
   const [latestTelemetry, setLatestTelemetry] = useState<StreamTelemetryPayload | null>(null);
@@ -445,15 +447,13 @@ export function useStreamPulse({
     setStreamSource('preset');
   }, [loadVideoUrl]);
 
-  // Initial startup
+  // Initial startup: Load surveillance benchmark stream immediately with zero permission prompts
   useEffect(() => {
-    if (streamSource === 'webcam') {
-      startWebcam();
-    }
+    loadVideoUrl('https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4');
     return () => {
       stopWebcam();
     };
-  }, []);
+  }, [loadVideoUrl, stopWebcam]);
 
   // Cleanup on unmount
   useEffect(() => {

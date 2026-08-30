@@ -123,7 +123,7 @@ export const VideoStage: React.FC<VideoStageProps> = ({
   onTakeSnapshot,
 }) => {
   const [hudTime, setHudTime] = useState<string>('');
-  const [activeTab, setActiveTab] = useState<'source' | 'upload' | 'url' | 'presets'>('source');
+  const [activeTab, setActiveTab] = useState<'source' | 'upload' | 'url' | 'presets'>('upload');
   const [urlInput, setUrlInput] = useState<string>('https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4');
   const [selectedPresetId, setSelectedPresetId] = useState<string>('traffic');
   const [isDragOver, setIsDragOver] = useState<boolean>(false);
