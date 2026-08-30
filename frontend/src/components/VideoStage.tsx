@@ -112,6 +112,8 @@ export const VideoStage: React.FC<VideoStageProps> = ({
   const [isDragOver, setIsDragOver] = useState<boolean>(false);
   const [uploadedFileName, setUploadedFileName] = useState<string | null>(null);
   const [isPlaying, setIsPlaying] = useState<boolean>(true);
+  const [videoCurrentTime, setVideoCurrentTime] = useState<number>(0);
+  const [videoDuration, setVideoDuration] = useState<number>(0);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   // Live HUD Millisecond Clock
@@ -129,6 +131,44 @@ export const VideoStage: React.FC<VideoStageProps> = ({
     }, 50);
     return () => clearInterval(timer);
   }, []);
+
+  // Video Time Update Listener for Smooth Scrubbing
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    const onTimeUpdate = () => {
+      setVideoCurrentTime(video.currentTime || 0);
+      setVideoDuration(video.duration || 0);
+    };
+
+    const onLoadedMetadata = () => {
+      setVideoDuration(video.duration || 0);
+    };
+
+    video.addEventListener('timeupdate', onTimeUpdate);
+    video.addEventListener('loadedmetadata', onLoadedMetadata);
+
+    return () => {
+      video.removeEventListener('timeupdate', onTimeUpdate);
+      video.removeEventListener('loadedmetadata', onLoadedMetadata);
+    };
+  }, [videoRef, streamSource]);
+
+  const formatSec = (sec: number) => {
+    if (isNaN(sec) || sec < 0) return '00:00';
+    const m = Math.floor(sec / 60);
+    const s = Math.floor(sec % 60);
+    return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+  };
+
+  const handleSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const video = videoRef.current;
+    if (!video) return;
+    const target = parseFloat(e.target.value);
+    video.currentTime = target;
+    setVideoCurrentTime(target);
+  };
 
   const handleFileDrop = (e: React.DragEvent) => {
     e.preventDefault();
@@ -413,38 +453,59 @@ export const VideoStage: React.FC<VideoStageProps> = ({
             />
 
             {uploadedFileName && streamSource === 'file' ? (
-              <div className="bg-[#121520] border border-[#262f45] rounded-xl p-3 flex flex-wrap items-center justify-between gap-3">
-                <div className="flex items-center gap-2.5">
-                  <div className="p-2 rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                    <FileVideo className="w-4 h-4" />
+              <div className="bg-[#121520] border border-[#262f45] rounded-xl p-3 flex flex-col gap-2.5">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="flex items-center gap-2.5">
+                    <div className="p-2 rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                      <FileVideo className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <h4 className="text-xs font-bold text-slate-200 truncate max-w-xs sm:max-w-md">
+                        {uploadedFileName}
+                      </h4>
+                      <span className="text-[10px] text-emerald-400 font-semibold flex items-center gap-1">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                        Chunked Ingestion Active (Streaming at 15–30 FPS)
+                      </span>
+                    </div>
                   </div>
-                  <div>
-                    <h4 className="text-xs font-bold text-slate-200 truncate max-w-xs sm:max-w-md">
-                      {uploadedFileName}
-                    </h4>
-                    <span className="text-[10px] text-emerald-400 font-semibold flex items-center gap-1">
-                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
-                      Local Video Ingestion Active (Streaming at 10 FPS)
-                    </span>
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={togglePlayback}
+                      className="bg-[#181d2e] hover:bg-[#222a3d] text-slate-200 border border-[#2e374f] px-3 py-1.5 rounded-lg font-semibold flex items-center gap-1.5 transition-all text-xs"
+                    >
+                      {isPlaying ? <Pause className="w-3.5 h-3.5 text-amber-400" /> : <Play className="w-3.5 h-3.5 text-emerald-400 fill-current" />}
+                      <span>{isPlaying ? 'Pause' : 'Play'}</span>
+                    </button>
+
+                    <button
+                      onClick={() => fileInputRef.current?.click()}
+                      className="bg-emerald-500 hover:bg-emerald-400 text-black font-bold px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-all text-xs shadow-sm"
+                    >
+                      <RefreshCw className="w-3.5 h-3.5" />
+                      <span>Upload New</span>
+                    </button>
                   </div>
                 </div>
 
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={togglePlayback}
-                    className="bg-[#181d2e] hover:bg-[#222a3d] text-slate-200 border border-[#2e374f] px-3 py-1.5 rounded-lg font-semibold flex items-center gap-1.5 transition-all text-xs"
-                  >
-                    {isPlaying ? <Pause className="w-3.5 h-3.5 text-amber-400" /> : <Play className="w-3.5 h-3.5 text-emerald-400 fill-current" />}
-                    <span>{isPlaying ? 'Pause' : 'Play'}</span>
-                  </button>
-
-                  <button
-                    onClick={() => fileInputRef.current?.click()}
-                    className="bg-emerald-500 hover:bg-emerald-400 text-black font-bold px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-all text-xs shadow-sm"
-                  >
-                    <RefreshCw className="w-3.5 h-3.5" />
-                    <span>Upload New Video</span>
-                  </button>
+                {/* Video Playback Progress Scrubber Bar */}
+                <div className="flex items-center gap-3 pt-1 border-t border-[#1a1f2e] text-[11px] text-slate-400">
+                  <span className="text-emerald-400 font-bold w-12 text-right">
+                    {formatSec(videoCurrentTime)}
+                  </span>
+                  <input
+                    type="range"
+                    min="0"
+                    max={videoDuration || 100}
+                    step="0.1"
+                    value={videoCurrentTime}
+                    onChange={handleSeek}
+                    className="flex-1 accent-emerald-500 cursor-pointer h-1.5 bg-slate-700 rounded-lg"
+                  />
+                  <span className="text-slate-500 w-12">
+                    {formatSec(videoDuration)}
+                  </span>
                 </div>
               </div>
             ) : (

@@ -6,6 +6,9 @@ export interface DetectionResult {
   normalized_box: [number, number, number, number]; // [nx1, ny1, nx2, ny2]
   tracking_id?: number;
   velocity?: number;
+  is_violator?: boolean;
+  is_anomaly?: boolean;
+  in_breached_roi?: boolean;
 }
 
 export interface AudioAnalysisResult {

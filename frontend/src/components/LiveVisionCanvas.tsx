@@ -49,7 +49,25 @@ export const LiveVisionCanvas: React.FC<LiveVisionCanvasProps> = ({
       const telemetry = latestTelemetryRef.current;
       const confThresh = confidenceThresholdRef.current;
 
-      // 1. Render Clean YOLOv8 Detected Object Bounding Boxes
+      const isStreamAnomaly = Boolean(
+        telemetry?.trigger_fired ||
+        (telemetry?.alerts && telemetry.alerts.length > 0) ||
+        telemetry?.forensic_incident ||
+        (telemetry?.audio_db !== undefined && telemetry.audio_db > -28.0)
+      );
+
+      // 1. Draw Pulsing Red Highlight Border Around Canvas Frame During Anomalies
+      if (isStreamAnomaly) {
+        ctx.save();
+        ctx.strokeStyle = 'rgba(239, 68, 68, 0.70)';
+        ctx.lineWidth = 6;
+        ctx.shadowColor = '#ef4444';
+        ctx.shadowBlur = 18;
+        ctx.strokeRect(3, 3, w - 6, h - 6);
+        ctx.restore();
+      }
+
+      // 2. Render YOLOv8 Detected Object Bounding Boxes with Dynamic Anomaly Colors
       if (telemetry?.detections && telemetry.detections.length > 0) {
         telemetry.detections.forEach((det) => {
           if (det.confidence < confThresh) return;
@@ -67,21 +85,23 @@ export const LiveVisionCanvas: React.FC<LiveVisionCanvasProps> = ({
             'weapon',
           ].includes(det.label.toLowerCase());
 
-          const isViolator = isProhibited || (det as any).is_violator;
-          const boxColor = isViolator ? '#f59e0b' : '#10b981';
-          const labelBg = isViolator ? '#d97706' : '#059669';
+          // Dynamic Anomaly Highlighting: Crimson Red (#EF4444) for anomaly, Emerald Green (#10B981) for normal
+          const isAnomaly = det.is_violator || (det as any).is_anomaly || isStreamAnomaly || isProhibited;
+          const boxColor = isAnomaly ? '#EF4444' : '#10B981';
+          const labelBg = isAnomaly ? 'rgba(239, 68, 68, 0.90)' : 'rgba(16, 185, 129, 0.85)';
+          const boxLineWidth = isAnomaly ? 3.0 : 2.0;
 
-          // Draw Bounding Box with subtle glow
+          // Draw Bounding Box with glow
           ctx.save();
           ctx.strokeStyle = boxColor;
-          ctx.lineWidth = isViolator ? 3.0 : 2.0;
+          ctx.lineWidth = boxLineWidth;
           ctx.shadowColor = boxColor;
-          ctx.shadowBlur = isViolator ? 12 : 4;
+          ctx.shadowBlur = isAnomaly ? 14 : 4;
           ctx.strokeRect(x1, y1, boxW, boxH);
 
           // Tactical Corner Brackets
           const cornerLen = Math.min(16, boxW / 4, boxH / 4);
-          ctx.lineWidth = 3.0;
+          ctx.lineWidth = isAnomaly ? 4.0 : 3.0;
           // Top Left
           ctx.beginPath();
           ctx.moveTo(x1, y1 + cornerLen);
@@ -108,7 +128,10 @@ export const LiveVisionCanvas: React.FC<LiveVisionCanvasProps> = ({
           ctx.stroke();
 
           // Crisp Label Pill
-          const tagPrefix = isProhibited ? '🚫 [PROHIBITED] ' : '';
+          let tagPrefix = '';
+          if (isProhibited) tagPrefix = '🚫 [PROHIBITED] ';
+          else if (isAnomaly && isStreamAnomaly) tagPrefix = '⚠️ [ANOMALY] ';
+
           const tagText = `${tagPrefix}${det.label.toUpperCase()} ${Math.round(
             det.confidence * 100
           )}% ${det.tracking_id ? `[#${det.tracking_id}]` : ''}`;

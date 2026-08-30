@@ -141,23 +141,46 @@ class MLInferenceWorker:
         if self.model is None:
             return detections, 0, width, height
 
-        results = self.model.predict(
-            image,
-            imgsz=settings.YOLO_IMAGE_SIZE,
-            conf=settings.YOLO_CONFIDENCE_THRESHOLD,
-            device=settings.YOLO_DEVICE,
-            verbose=False,
-        )
+        try:
+            # Native YOLOv8 multi-object tracking with persistent ByteTrack IDs
+            results = self.model.track(
+                source=image,
+                persist=True,
+                tracker="bytetrack.yaml",
+                imgsz=settings.YOLO_IMAGE_SIZE,
+                conf=settings.YOLO_CONFIDENCE_THRESHOLD,
+                device=settings.YOLO_DEVICE,
+                verbose=False,
+            )
+        except Exception as e:
+            logger.warning(f"ByteTrack tracker error ({e}), falling back to standard prediction.")
+            results = self.model.predict(
+                image,
+                imgsz=settings.YOLO_IMAGE_SIZE,
+                conf=settings.YOLO_CONFIDENCE_THRESHOLD,
+                device=settings.YOLO_DEVICE,
+                verbose=False,
+            )
 
         for result in results:
             boxes = result.boxes
-            if boxes is None:
+            if boxes is None or len(boxes) == 0:
                 continue
 
-            for idx, box in enumerate(boxes):
-                xyxy = box.xyxy[0].cpu().numpy().tolist()
-                conf = float(box.conf[0].cpu().numpy())
-                cls_id = int(box.cls[0].cpu().numpy())
+            track_ids = (
+                boxes.id.int().cpu().tolist()
+                if (boxes.id is not None)
+                else [None] * len(boxes)
+            )
+            xyxy_list = boxes.xyxy.cpu().tolist()
+            conf_list = boxes.conf.cpu().tolist()
+            cls_list = boxes.cls.int().cpu().tolist()
+
+            for idx in range(len(boxes)):
+                xyxy = xyxy_list[idx]
+                conf = float(conf_list[idx])
+                cls_id = int(cls_list[idx])
+                t_id = track_ids[idx] if (idx < len(track_ids) and track_ids[idx] is not None) else (100 + idx)
                 label = result.names.get(cls_id, f"class_{cls_id}")
                 norm_box = normalize_box(xyxy, width, height)
 
@@ -168,7 +191,7 @@ class MLInferenceWorker:
                         confidence=round(conf, 4),
                         box=[round(c, 1) for c in xyxy],
                         normalized_box=[round(c, 4) for c in norm_box],
-                        tracking_id=100 + idx,
+                        tracking_id=t_id,
                     )
                 )
 

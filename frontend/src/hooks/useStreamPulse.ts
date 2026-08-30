@@ -685,23 +685,37 @@ export function useStreamPulse({
       const canvas = offscreenCanvasRef.current;
       const hasValidVideo =
         video &&
-        (video.readyState >= 2 || (video.videoWidth > 0 && video.videoHeight > 0));
+        (video.readyState >= 2 || (video.videoWidth > 0 && video.videoHeight > 0)) &&
+        !video.paused;
 
       if (hasValidVideo && canvas) {
         const ctx = canvas.getContext('2d', { willReadFrequently: true });
         if (ctx) {
           try {
-            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+            // Downscale frame to max dimension 640px to ensure ultra-low network payload (<20KB/frame)
+            const vw = video.videoWidth || 640;
+            const vh = video.videoHeight || 360;
+            const scale = Math.min(1.0, 640 / Math.max(vw, vh));
+            const targetW = Math.max(160, Math.round(vw * scale));
+            const targetH = Math.max(120, Math.round(vh * scale));
+
+            if (canvas.width !== targetW || canvas.height !== targetH) {
+              canvas.width = targetW;
+              canvas.height = targetH;
+            }
+
+            ctx.drawImage(video, 0, 0, targetW, targetH);
 
             const tClient = Date.now() / 1000;
             sequenceCounterRef.current++;
 
-            // 1. If backend WebSocket is connected, send real frame to backend
+            // 1. If backend WebSocket is connected, send real frame to backend (with backpressure guard)
             if (
               ingestWsRef.current &&
-              ingestWsRef.current.readyState === WebSocket.OPEN
+              ingestWsRef.current.readyState === WebSocket.OPEN &&
+              ingestWsRef.current.bufferedAmount < 256 * 1024
             ) {
-              const frameBase64 = canvas.toDataURL('image/jpeg', 0.75);
+              const frameBase64 = canvas.toDataURL('image/jpeg', 0.70);
               const payload = {
                 stream_id: streamId,
                 sequence_id: sequenceCounterRef.current,
@@ -710,7 +724,7 @@ export function useStreamPulse({
                 metadata: { source: streamSource },
               };
               ingestWsRef.current.send(JSON.stringify(payload));
-            } else {
+            } else if (!ingestWsRef.current || ingestWsRef.current.readyState !== WebSocket.OPEN) {
               // 2. Real In-Browser AI Object Detection Engine (COCO-SSD / TensorFlow.js)
               let localDets: DetectionResult[] = [];
 
