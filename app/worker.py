@@ -79,6 +79,7 @@ class MLInferenceWorker:
         self.last_snapshot_time: Dict[str, float] = {}
         self.edge_gatekeepers: Dict[str, EdgeGatekeeper] = {}
         self.audio_triggers: Dict[str, AudioTransientTrigger] = {}
+        self.temporal_buffers: Dict[str, deque] = {}
         self.thread_pool = concurrent.futures.ThreadPoolExecutor(max_workers=2, thread_name_prefix="snapshot-worker")
 
     def load_model(self) -> None:
@@ -122,7 +123,11 @@ class MLInferenceWorker:
 
     def get_edge_gatekeeper(self, stream_id: str) -> EdgeGatekeeper:
         if stream_id not in self.edge_gatekeepers:
-            self.edge_gatekeepers[stream_id] = EdgeGatekeeper(delta_threshold=0.018, warmup_frames=3)
+            self.edge_gatekeepers[stream_id] = EdgeGatekeeper(
+                delta_threshold=0.006,
+                local_cell_threshold=0.035,
+                warmup_frames=3,
+            )
         return self.edge_gatekeepers[stream_id]
 
     def get_audio_trigger(self, stream_id: str) -> AudioTransientTrigger:
@@ -132,6 +137,11 @@ class MLInferenceWorker:
                 spike_db_threshold=-28.0,
             )
         return self.audio_triggers[stream_id]
+
+    def get_temporal_buffer(self, stream_id: str) -> deque:
+        if stream_id not in self.temporal_buffers:
+            self.temporal_buffers[stream_id] = deque(maxlen=45)
+        return self.temporal_buffers[stream_id]
 
     def run_cv_inference(self, image: np.ndarray) -> Tuple[List[DetectionResult], int, int, int]:
         height, width = image.shape[:2]
@@ -386,6 +396,8 @@ class MLInferenceWorker:
         # 2. Sub-2ms Frame-Delta Gatekeeper
         gatekeeper = self.get_edge_gatekeeper(stream_id)
         raw_image = decode_base64_image(frame_base64) if frame_base64 else None
+        if raw_image is not None:
+            self.get_temporal_buffer(stream_id).append((t_worker_start, raw_image))
 
         t_gatekeeper_start = time.time()
         is_static, delta_score, stats = gatekeeper.process_frame(
@@ -497,7 +509,24 @@ class MLInferenceWorker:
             timestamp_utc = utc_now.isoformat(timespec="milliseconds").replace("+00:00", "Z")
             epoch_ms = int(t_client * 1000)
 
-            # Asynchronous Cloud Multimodal VLM Analysis (Gemini 2.5 Flash)
+            # 3-Frame Temporal Sequence Extraction: [T-1s Pre-Event, T0 Trigger Keyframe, T+1s Post-Event]
+            t_buf = self.get_temporal_buffer(stream_id)
+            t_target_pre = now_ts - 1.0
+            pre_frame = raw_image
+            if len(t_buf) > 0:
+                closest_item = min(t_buf, key=lambda x: abs(x[0] - t_target_pre))
+                pre_frame = closest_item[1]
+
+            event_frame = raw_image
+            post_frame = t_buf[-1][1] if len(t_buf) > 0 else raw_image
+
+            temporal_sequence = [pre_frame, event_frame, post_frame]
+            temporal_keyframes = [
+                encode_image_to_data_uri_fast(f, max_dim=640, quality=65)
+                for f in temporal_sequence
+            ]
+
+            # Asynchronous Cloud Multimodal VLM Analysis (Gemini 2.5 Flash with 3-frame sequence)
             try:
                 loop = asyncio.get_running_loop()
                 vlm_result = await loop.run_in_executor(
@@ -509,10 +538,11 @@ class MLInferenceWorker:
                     audio_db,
                     [d.label for d in detections],
                     [r.rule_id for r in triggered_rules],
+                    temporal_sequence,
                 )
                 if vlm_result:
                     telemetry_service.record_cloud_dispatch(
-                        tokens_used=258,
+                        tokens_used=768,
                         is_incident=vlm_result.is_incident,
                     )
             except Exception as e:
@@ -550,10 +580,12 @@ class MLInferenceWorker:
             )
 
             telemetry_ctx = SystemTelemetryDetail(
-                ingest_latency_ms=latency.ingestion_latency_ms,
-                queue_dwell_ms=latency.queue_dwell_time_ms,
-                inference_latency_ms=latency.inference_time_ms,
-                total_e2e_latency_ms=latency.e2e_latency_ms,
+                cpu_percent=0.0,
+                memory_percent=0.0,
+                e2e_latency_ms=latency.e2e_latency_ms,
+                inference_time_ms=latency.inference_time_ms,
+                queue_dwell_time_ms=latency.queue_dwell_time_ms,
+                ingestion_latency_ms=latency.ingestion_latency_ms,
                 pipeline_fps=current_fps,
             )
 
@@ -561,7 +593,8 @@ class MLInferenceWorker:
                 total_objects_detected=len(detections),
                 detections=detection_details,
                 snapshot_annotated_base64=snapshot_annotated_base64,
-                snapshot_raw_base64=None,
+                snapshot_raw_base64=temporal_keyframes[1] if len(temporal_keyframes) > 1 else snapshot_annotated_base64,
+                temporal_keyframes=temporal_keyframes,
             )
 
             forensic_incident = ForensicAnomalyIncident(
@@ -578,6 +611,7 @@ class MLInferenceWorker:
                 audio_context=audio_ctx,
                 system_telemetry=telemetry_ctx,
                 vlm_synthesis=vlm_result,
+                temporal_keyframes=temporal_keyframes,
             )
 
             asyncio.create_task(

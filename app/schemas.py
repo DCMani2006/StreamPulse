@@ -201,6 +201,7 @@ class VisualContextDetail(BaseModel):
     detections: List[DetectionDetail] = Field(default_factory=list, description="All detected objects")
     snapshot_annotated_base64: str = Field(..., description="Annotated snapshot base64 URI with overlays")
     snapshot_raw_base64: str = Field(..., description="Original raw unmodified frame base64 URI")
+    temporal_keyframes: Optional[List[str]] = Field(default_factory=list, description="3-frame sequence [T-1s, T0, T+1s]")
 
 
 class AudioContextDetail(BaseModel):
@@ -213,10 +214,12 @@ class AudioContextDetail(BaseModel):
 
 class SystemTelemetryDetail(BaseModel):
     """Granular millisecond-level telemetry at the instant of the anomaly."""
-    ingest_latency_ms: float = Field(..., description="t_ingest - t_client (ms)")
-    queue_dwell_ms: float = Field(..., description="t_worker_start - t_ingest (ms)")
-    inference_latency_ms: float = Field(..., description="t_worker_done - t_worker_start (ms)")
-    total_e2e_latency_ms: float = Field(..., description="t_broadcast - t_client (ms)")
+    cpu_percent: float = Field(..., description="Server CPU utilization percentage")
+    memory_percent: float = Field(..., description="Server RAM utilization percentage")
+    e2e_latency_ms: float = Field(..., description="End-to-end processing latency")
+    inference_time_ms: float = Field(..., description="Computer vision inference latency")
+    queue_dwell_time_ms: float = Field(..., description="Redis Stream queue dwell latency")
+    ingestion_latency_ms: float = Field(..., description="Network ingest transport latency")
     pipeline_fps: float = Field(..., description="Active ingestion and processing FPS")
 
 
@@ -235,6 +238,7 @@ class ForensicAnomalyIncident(BaseModel):
     audio_context: AudioContextDetail
     system_telemetry: SystemTelemetryDetail
     vlm_synthesis: Optional[IncidentAnalysisResult] = None
+    temporal_keyframes: Optional[List[str]] = Field(default_factory=list, description="3-frame sequence [T-1s, T0, T+1s]")
 
 
 class TokenOptimizationStats(BaseModel):

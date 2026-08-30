@@ -343,20 +343,94 @@ export const IncidentFeed: React.FC<IncidentFeedProps> = ({ incidents }) => {
               </div>
             )}
 
-            {/* Full Snapshot Viewer */}
-            <div className="space-y-2">
-              <span className="text-[11px] font-bold text-slate-300 flex items-center gap-1.5">
-                <Eye className="w-3.5 h-3.5 text-emerald-400" />
-                Forensic Keyframe Capture
-              </span>
-              <div className="bg-black rounded-xl overflow-hidden border border-[#2a334a] relative aspect-video flex items-center justify-center">
-                <img
-                  src={activeForensic?.visual_context?.snapshot_annotated_base64 || selectedIncident.snapshot_url}
-                  alt="Forensic Keyframe"
-                  className="w-full h-full object-contain"
-                />
-              </div>
-            </div>
+            {/* 3-Frame Chronological Temporal Filmstrip */}
+            {(() => {
+              const temporalFrames =
+                activeForensic?.temporal_keyframes ||
+                activeForensic?.visual_context?.temporal_keyframes ||
+                selectedIncident?.temporal_keyframes ||
+                [];
+
+              if (temporalFrames.length === 3) {
+                return (
+                  <div className="space-y-2">
+                    <div className="flex flex-wrap items-center justify-between gap-1">
+                      <span className="text-[11px] font-bold text-slate-300 flex items-center gap-1.5">
+                        <Clock className="w-3.5 h-3.5 text-emerald-400" />
+                        Chronological Temporal Keyframe Sequence
+                      </span>
+                      <span className="text-[10px] text-emerald-400 font-bold font-mono bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded">
+                        Multi-Part Temporal VLM Analysis (T-1s ➔ T0 ➔ T+1s)
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                      {/* Frame 1: T-1s Pre-Event */}
+                      <div className="bg-[#0b0e17] border border-[#222a3d] rounded-xl overflow-hidden flex flex-col">
+                        <div className="px-2.5 py-1 bg-[#141824] border-b border-[#222a3d] flex items-center justify-between text-[10px]">
+                          <span className="text-slate-400 font-bold">1. Pre-Event</span>
+                          <span className="text-slate-500 font-mono">T - 1.0s</span>
+                        </div>
+                        <div className="aspect-video bg-black flex items-center justify-center overflow-hidden">
+                          <img
+                            src={temporalFrames[0]}
+                            alt="T-1s Pre-Event"
+                            className="w-full h-full object-contain"
+                          />
+                        </div>
+                      </div>
+
+                      {/* Frame 2: T0 Trigger Keyframe */}
+                      <div className="bg-[#0b0e17] border-2 border-red-500 ring-2 ring-red-500/30 rounded-xl overflow-hidden flex flex-col shadow-lg">
+                        <div className="px-2.5 py-1 bg-red-600 text-white flex items-center justify-between text-[10px] font-bold">
+                          <span className="flex items-center gap-1">⚡ Trigger Keyframe</span>
+                          <span className="font-mono">T 0</span>
+                        </div>
+                        <div className="aspect-video bg-black flex items-center justify-center overflow-hidden">
+                          <img
+                            src={temporalFrames[1]}
+                            alt="T0 Trigger Keyframe"
+                            className="w-full h-full object-contain"
+                          />
+                        </div>
+                      </div>
+
+                      {/* Frame 3: T+1s Post-Event */}
+                      <div className="bg-[#0b0e17] border border-[#222a3d] rounded-xl overflow-hidden flex flex-col">
+                        <div className="px-2.5 py-1 bg-[#141824] border-b border-[#222a3d] flex items-center justify-between text-[10px]">
+                          <span className="text-slate-400 font-bold">3. Post-Event</span>
+                          <span className="text-slate-500 font-mono">T + 1.0s</span>
+                        </div>
+                        <div className="aspect-video bg-black flex items-center justify-center overflow-hidden">
+                          <img
+                            src={temporalFrames[2]}
+                            alt="T+1s Post-Event"
+                            className="w-full h-full object-contain"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              }
+
+              // Fallback single snapshot
+              return (
+                <div className="space-y-2">
+                  <span className="text-[11px] font-bold text-slate-300 flex items-center gap-1.5">
+                    <Eye className="w-3.5 h-3.5 text-emerald-400" />
+                    Forensic Keyframe Capture
+                  </span>
+                  <div className="bg-black rounded-xl overflow-hidden border border-[#2a334a] relative aspect-video flex items-center justify-center">
+                    <img
+                      src={activeForensic?.visual_context?.snapshot_annotated_base64 || selectedIncident.snapshot_url}
+                      alt="Forensic Keyframe"
+                      className="w-full h-full object-contain"
+                    />
+                  </div>
+                </div>
+              );
+            })()}
 
             {/* Entities Involved & Multimodal Telemetry Grid */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">

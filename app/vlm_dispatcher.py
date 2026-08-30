@@ -36,26 +36,34 @@ except ImportError:
 
 
 SYSTEM_PROMPT = """
-You are StreamPulse Autonomous Incident Intelligence, a Principal Surveillance & Physical Security Multimodal Analyst.
-Analyze the provided surveillance video keyframe and associated multi-modal telemetry cues (acoustic dBFS, motion delta, detected entities).
-Provide a structured, decisive, and objective forensic analysis of whether a real incident, safety hazard, traffic collision, facility breach, or physical anomaly is occurring.
+You are the autonomous incident forensics engine of StreamPulse, a Principal Surveillance & Physical Security Multimodal Analyst.
+You are provided a 3-frame chronological sequence:
+- [Frame 1: T-1s (Pre-Event)]: Initial baseline state before the trigger.
+- [Frame 2: T0 (Trigger Event)]: The detected visual/acoustic anomaly peak.
+- [Frame 3: T+1s (Post-Event)]: Immediate aftermath and resulting state.
 
-Rules:
-1. 'is_incident': Set True ONLY for genuine accidents, traffic disruptions, safety violations, unauthorized intrusions, fights, or sudden hazards. Set False for normal benign motion, normal walking, or passing traffic.
-2. 'category': Exactly one of ['TRAFFIC', 'INDUSTRIAL_SAFETY', 'FACILITY_SECURITY', 'ANOMALY'].
-3. 'severity': Exactly one of ['LOW', 'MEDIUM', 'HIGH', 'CRITICAL'].
-4. 'title': Max 8 words, punchy and clear headline.
-5. 'description': Forensic facts explaining entities, trajectories, and visual/audio cues.
-6. 'entities_involved': List of key entities observed (e.g. ['Forklift', 'Pedestrian', 'SUV #102']).
-7. 'recommended_action': Concrete dispatch or operator action.
-8. 'estimated_confidence': Float score in [0.0, 1.0].
+Perform rigorous chronological motion and physical analysis across the sequence:
+1. Compare Frame 1 and Frame 3 to detect sudden abnormal stoppage, path obstruction, erratic trajectory, rapid deceleration, or physical collision between vehicles/pedestrians/machinery.
+2. Pay close attention to vehicle orientations (skids, T-bones, rear-end impacts, wrong-way movement), structural deformation, debris scatter, or fallen individuals.
+3. If the sequence exhibits a genuine collision, hazard, accident, or safety breach, set `is_incident = True`, assign appropriate `severity` ('HIGH' or 'CRITICAL'), and provide a concise forensic description detailing the interaction across the timeline.
+4. If the motion is normal transit, routine pedestrian movement, or non-hazardous traffic flow, set `is_incident = False` with `severity = 'LOW'`.
+
+Output Contract:
+- 'is_incident': bool (True for real incidents/collisions/hazards; False for normal benign activity).
+- 'category': Exactly one of ['TRAFFIC', 'INDUSTRIAL_SAFETY', 'FACILITY_SECURITY', 'ANOMALY'].
+- 'severity': Exactly one of ['LOW', 'MEDIUM', 'HIGH', 'CRITICAL'].
+- 'title': Max 8 words, punchy and clear headline.
+- 'description': Forensic analysis explaining the chronological progression across T-1s -> T0 -> T+1s.
+- 'entities_involved': List of key entities observed (e.g. ['Red Sedan', 'SUV', 'Pedestrian']).
+- 'recommended_action': Concrete dispatch or operator action.
+- 'estimated_confidence': Float score in [0.0, 1.0].
 """
 
 
 class CloudVLMDispatcher:
     """
     Asynchronous Cloud Multimodal Vision-Language Model (VLM) Dispatcher:
-    - Transmits candidate event keyframes and telemetry bursts to Google Gemini 2.5 Flash.
+    - Transmits 3-frame chronological sequences (T-1s, T0, T+1s) and acoustic bursts to Google Gemini 2.5 Flash.
     - Uses strict Pydantic JSON schema constraints for guaranteed deterministic outputs.
     - Handles connection timeouts, missing API keys, and rate-limiting gracefully.
     """
@@ -110,39 +118,52 @@ class CloudVLMDispatcher:
         audio_db: float,
         detected_classes: List[str],
         active_triggers: List[str],
+        temporal_sequence: Optional[List[np.ndarray]] = None,
     ) -> IncidentAnalysisResult:
         """
-        Dispatches candidate event to Gemini 2.5 Flash or structured fallback.
+        Dispatches 3-frame chronological candidate sequence to Gemini 2.5 Flash or structured fallback.
         Execution runs in thread pool / async task without stalling the edge pipeline.
         """
         now = time.time()
         self.last_dispatch_time[stream_id] = now
 
-        image_bytes = self._convert_image_to_jpeg_bytes(image)
+        # Prepare temporal keyframe byte list
+        frame_parts = []
+        if temporal_sequence and len(temporal_sequence) == 3:
+            for idx, f in enumerate(temporal_sequence):
+                b = self._convert_image_to_jpeg_bytes(f)
+                if b:
+                    tag = "T-1s (Pre-Event)" if idx == 0 else ("T0 (Trigger Event)" if idx == 1 else "T+1s (Post-Event)")
+                    frame_parts.append((tag, b))
+
+        # Fallback to single frame if sequence unavailable
+        if not frame_parts:
+            b = self._convert_image_to_jpeg_bytes(image)
+            if b:
+                frame_parts.append(("T0 (Trigger Keyframe)", b))
 
         # 1. Attempt Cloud Multimodal VLM (Gemini 2.5 Flash)
-        if self.client and image_bytes and HAS_GENAI:
+        if self.client and frame_parts and HAS_GENAI:
             try:
                 prompt_text = (
-                    f"Surveillance Event Telemetry Context:\n"
+                    f"Surveillance Incident Chronological Analysis ({self.active_preset} Sector):\n"
                     f"- Stream ID: {stream_id}\n"
-                    f"- Active Domain Sector: {self.active_preset}\n"
+                    f"- Sector Domain: {self.active_preset}\n"
                     f"- Visual Motion Delta: {delta_score * 100.0:.1f}%\n"
                     f"- Acoustic Level: {audio_db:.1f} dBFS\n"
-                    f"- Detected Objects: {', '.join(detected_classes) if detected_classes else 'None'}\n"
+                    f"- Detected Entities: {', '.join(detected_classes) if detected_classes else 'None'}\n"
                     f"- Active Edge Triggers: {', '.join(active_triggers) if active_triggers else 'Visual Motion'}\n\n"
-                    f"Analyze the attached frame and synthesize structured incident intelligence for the {self.active_preset} domain."
+                    f"Examine the attached {len(frame_parts)}-frame chronological timeline "
+                    f"and perform forensic motion/collision analysis for the {self.active_preset} domain."
                 )
+
+                content_payload: List[Any] = [prompt_text]
+                for tag, b in frame_parts:
+                    content_payload.append(types.Part.from_bytes(data=b, mime_type="image/jpeg"))
 
                 response = self.client.models.generate_content(
                     model=cloud_config.GEMINI_MODEL,
-                    contents=[
-                        types.Part.from_bytes(
-                            data=image_bytes,
-                            mime_type="image/jpeg",
-                        ),
-                        prompt_text,
-                    ],
+                    contents=content_payload,
                     config=types.GenerateContentConfig(
                         system_instruction=SYSTEM_PROMPT,
                         temperature=cloud_config.GEMINI_TEMPERATURE,
@@ -218,19 +239,20 @@ class CloudVLMDispatcher:
                 description=f"High visual delta ({delta_score*100:.1f}%) observed involving active entities ({', '.join(detected_classes[:3])}).",
                 entities_involved=detected_classes[:4],
                 recommended_action="Log incident dossier in system audit log and maintain camera tracking.",
-                estimated_confidence=0.88,
+                estimated_confidence=0.85,
             )
 
         return IncidentAnalysisResult(
             is_incident=False,
-            category=IncidentCategory.ANOMALY,
+            category=IncidentCategory[self.active_preset] if self.active_preset in IncidentCategory.__members__ else IncidentCategory.ANOMALY,
             severity=SeverityLevel.LOW,
-            title="Benign Activity / Motion Baseline",
-            description=f"Normal movement observed within baseline parameters ({delta_score*100:.1f}% pixel change).",
-            entities_involved=detected_classes[:3],
-            recommended_action="No intervention required. Frame logged for token baseline.",
-            estimated_confidence=0.95,
+            title="Nominal Surveillance Baseline",
+            description=f"Routine monitoring in progress. Delta: {delta_score*100:.1f}%, Audio: {audio_db:.1f} dBFS.",
+            entities_involved=detected_classes[:4],
+            recommended_action="No operator action required. Continue automated gatekeeper monitoring.",
+            estimated_confidence=0.92,
         )
 
 
+# Singleton VLM Dispatcher Instance
 vlm_dispatcher = CloudVLMDispatcher()

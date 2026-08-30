@@ -101,6 +101,7 @@ export interface VisualContextDetail {
   detections: DetectionDetail[];
   snapshot_annotated_base64: string;
   snapshot_raw_base64: string;
+  temporal_keyframes?: string[];
 }
 
 export interface AudioContextDetail {
@@ -146,6 +147,7 @@ export interface ForensicAnomalyIncident {
   audio_context: AudioContextDetail;
   system_telemetry: SystemTelemetryDetail;
   vlm_synthesis?: IncidentAnalysisResult;
+  temporal_keyframes?: string[];
 }
 
 export interface AlertTrigger {
@@ -159,6 +161,7 @@ export interface AlertTrigger {
   details?: Record<string, any>;
   snapshot_url?: string;
   forensic_incident?: ForensicAnomalyIncident;
+  temporal_keyframes?: string[];
 }
 
 export interface TokenStatsDetail {
