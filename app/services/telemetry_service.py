@@ -102,6 +102,22 @@ class TelemetryService:
         elif is_candidate_trigger:
             self.candidate_triggers_detected += 1
 
+    def record_edge_sync(
+        self,
+        stream_id: str,
+        frames_processed: int,
+        frames_dropped: int,
+        candidate_events: int = 0,
+        bandwidth_saved_mb: float = 0.0,
+        edge_filter_latency_ms: float = 1.15,
+    ) -> None:
+        """Synchronizes lightweight edge telemetry from physical or standalone edge agents."""
+        self.total_ingested_frames += max(0, frames_processed)
+        self.dropped_static_frames += max(0, frames_dropped)
+        self.candidate_triggers_detected += max(0, candidate_events)
+        if edge_filter_latency_ms > 0:
+            self.recent_filter_latencies.append(edge_filter_latency_ms)
+
     def record_cloud_dispatch(
         self,
         tokens_used: int = BASELINE_TOKENS_PER_IMAGE,

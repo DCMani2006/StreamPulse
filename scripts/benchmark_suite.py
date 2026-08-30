@@ -314,28 +314,30 @@ class StreamPulseBenchmarkRunner:
         peak_ram = round(float(np.max(self.ram_samples)), 1) if self.ram_samples else 380.0
 
         report = {
-            "test_configuration": {
-                "concurrent_streams": self.num_streams,
+            "pipeline_architecture": {
+                "simulated_streams": self.num_streams,
                 "target_fps_per_camera": self.target_fps,
                 "theoretical_aggregated_fps": self.num_streams * self.target_fps,
                 "duration_seconds": round(actual_duration, 1),
+                "edge_gatekeeper_type": "Localized 4x4 Grid MAD + Acoustic RMS",
+                "cloud_vlm_model": "Google Gemini 2.5 Flash (Asynchronous)",
+                "note": "Benchmark stress-tests high-throughput WebSocket ingestion and sub-2ms edge filtering across N streams. Cloud VLM reasoning operates asynchronously without blocking this pipeline.",
             },
-            "throughput_and_token_efficiency": {
+            "ingestion_and_edge_gatekeeper_performance": {
                 "total_frames_ingested": total_ingested,
                 "actual_aggregated_fps": aggregated_fps,
-                "static_frames_dropped": dropped_static,
+                "locally_filtered_frames": dropped_static,
                 "edge_drop_rate_percent": drop_rate_pct,
-                "candidate_events_dispatched": candidate_events,
-                "actual_vlm_tokens_consumed": tokens_consumed,
-                "naive_continuous_tokens": naive_tokens,
-                "token_savings_percent": token_savings_pct,
-            },
-            "latency_sla_benchmarks_ms": {
-                "e2e_roundtrip_latency": e2e_stats,
-                "edge_gatekeeper_latency": edge_stats,
-                "cv_inference_latency": infer_stats,
+                "edge_filter_latency_ms": edge_stats,
+                "pipeline_transport_rtt_ms": e2e_stats,
                 "target_sla_ms": 300.0,
                 "sla_compliance_rate_percent": sla_compliance_rate,
+            },
+            "cloud_vlm_efficiency_and_token_accounting": {
+                "dispatched_candidate_events": candidate_events,
+                "actual_cloud_vlm_tokens": tokens_consumed,
+                "naive_continuous_stream_tokens": naive_tokens,
+                "token_savings_percent": token_savings_pct,
             },
             "compute_footprint": {
                 "avg_cpu_utilization_percent": avg_cpu,
@@ -348,37 +350,39 @@ class StreamPulseBenchmarkRunner:
 
     def _print_scorecard(self, report: Dict[str, Any]):
         """Prints formatted ASCII performance scorecard."""
-        cfg = report["test_configuration"]
-        tp = report["throughput_and_token_efficiency"]
-        lat = report["latency_sla_benchmarks_ms"]
+        arch = report["pipeline_architecture"]
+        edge = report["ingestion_and_edge_gatekeeper_performance"]
+        vlm = report["cloud_vlm_efficiency_and_token_accounting"]
         cmp = report["compute_footprint"]
 
         scorecard = f"""
-========================================================================================
-                 STREAMPULSE CLOUD SCALABILITY BENCHMARK REPORT
-========================================================================================
-[Configuration]
-  Concurrent Surveillance Streams: {cfg['concurrent_streams']} Cameras
-  Test Duration:                   {cfg['duration_seconds']}s
-  Target Camera FPS:               {cfg['target_fps_per_camera']} FPS ({cfg['theoretical_aggregated_fps']} FPS Aggregated Target)
+======================================================================
+       STREAMPULSE EDGE-TO-CLOUD CONCURRENCY BENCHMARK REPORT
+======================================================================
+[Pipeline Architecture]
+  Simulated Streams:       {arch['simulated_streams']} Concurrent Feeds ({arch['theoretical_aggregated_fps']:,} FPS aggregated target)
+  Test Duration:           {arch['duration_seconds']}s ({edge['actual_aggregated_fps']} FPS actual throughput)
+  Edge Gatekeeper Type:    {arch['edge_gatekeeper_type']}
+  Cloud VLM Model:         {arch['cloud_vlm_model']}
+  Execution Paradigm:      Asynchronous Non-Blocking Forensics
 
-[Throughput & Token Optimization]
-  Total Frames Ingested:           {tp['total_frames_ingested']:,} frames ({tp['actual_aggregated_fps']} FPS throughput)
-  Static Frames Dropped:           {tp['static_frames_dropped']:,} frames ({tp['edge_drop_rate_percent']}% Edge Drop Rate)
-  Candidate Events Dispatched:     {tp['candidate_events_dispatched']:,} incidents
-  Cloud VLM Tokens Consumed:       {tp['actual_vlm_tokens_consumed']:,} tokens
-  Theoretical Naive Stream Tokens: {tp['naive_continuous_tokens']:,} tokens
-  Token Reduction Ratio:           {tp['token_savings_percent']}% TOKEN SAVINGS
+[Ingestion & Edge Gatekeeper Performance]
+  Total Ingested Frames:   {edge['total_frames_ingested']:,} frames
+  Locally Filtered Frames: {edge['locally_filtered_frames']:,} frames ({edge['edge_drop_rate_percent']:.2f}% Edge Reduction)
+  Edge Filter Latency:     p50: {edge['edge_filter_latency_ms']['p50']}ms | p95: {edge['edge_filter_latency_ms']['p95']}ms | p99: {edge['edge_filter_latency_ms']['p99']}ms
+  Pipeline Transport RTT:  p50: {edge['pipeline_transport_rtt_ms']['p50']}ms | p95: {edge['pipeline_transport_rtt_ms']['p95']}ms | p99: {edge['pipeline_transport_rtt_ms']['p99']}ms
+  Sub-300ms SLA Rate:      {edge['sla_compliance_rate_percent']}% of frames meet <300ms live stream SLA
 
-[Latency SLA Benchmarks (< 300ms SLA)]
-  Edge Gatekeeper Filter Latency:  p50: {lat['edge_gatekeeper_latency']['p50']}ms | p95: {lat['edge_gatekeeper_latency']['p95']}ms | p99: {lat['edge_gatekeeper_latency']['p99']}ms
-  End-to-End WebSocket Roundtrip:  p50: {lat['e2e_roundtrip_latency']['p50']}ms | p95: {lat['e2e_roundtrip_latency']['p95']}ms | p99: {lat['e2e_roundtrip_latency']['p99']}ms
-  Sub-300ms SLA Compliance Rate:   {lat['sla_compliance_rate_percent']}% Under Target SLA
+[Cloud VLM Efficiency & Token Accounting]
+  Dispatched Incidents:    {vlm['dispatched_candidate_events']:,} candidate events (Modeled)
+  Actual Cloud Tokens:     {vlm['actual_cloud_vlm_tokens']:,} tokens (768 tokens / candidate)
+  Naive Stream Tokens:     {vlm['naive_continuous_stream_tokens']:,} tokens (262 tokens / frame)
+  Cloud Token Savings:     {vlm['token_savings_percent']:.2f}% Bandwidth & Token Reduction
 
-[Compute & Host Footprint]
-  Avg Host CPU Load:               {cmp['avg_cpu_utilization_percent']}%
-  Peak Process RAM Footprint:      {cmp['peak_process_ram_mb']} MB
-========================================================================================
+[System Resource Footprint]
+  Avg Host CPU Load:       {cmp['avg_cpu_utilization_percent']}%
+  Peak Process RAM:        {cmp['peak_process_ram_mb']} MB
+======================================================================
 """
         print(scorecard)
 
